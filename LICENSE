@@ -1,0 +1,266 @@
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+Appendix: Testudo (Xuan Gui Zhen) Community Edition Supplemental License Terms
+
+Testudo (Chinese name: Xuan Gui Zhen, hereinafter referred to as "the Software") is released by YaoShi Data (Wuhan) Co., Ltd. The Software is open sourced under the Apache License Version 2.0 and may be used for learning, research, internal use, secondary development, integrated deployment, and commercial projects, provided that you comply with the Apache License Version 2.0 and these supplemental terms.
+
+These supplemental terms are intended to clarify the usage boundaries, copyright notices, third-party open source compliance requirements, Community Edition authorization scope, and Enterprise Edition authorization matters for the Software. If these supplemental terms differ from the license terms of any third-party open source component integrated into or depended on by the Software, you must also comply with the applicable license terms of those third-party components.
+
+1. Open Source License
+
+   The Software is released under the Apache License Version 2.0. Subject to compliance with the Apache License Version 2.0 and these supplemental terms, you may use, copy, modify, distribute, and use the Software in commercial projects.
+
+2. Lawful and Compliant Use
+
+   You may not use the Software for any activity that endangers national security, national honor or interests, public security, public interests, or the lawful rights and interests of others. You may not use the Software, in any form, for illegal, non-compliant, fraudulent, offensive, destructive, regulatory-evasion, or other unlawful purposes.
+
+3. Third-Party Open Source Software
+
+   The Software integrates or depends on multiple third-party open source software packages, components, images, or tools. When using, distributing, modifying, or integrating the Software, you must also comply with the license terms, copyright notices, NOTICE files, and other compliance requirements of those third-party open source software projects.
+
+4. Preservation of Copyright Notices and Original Identifiers
+
+   When modifying, distributing, or creating derivative code based on the Software, you must preserve the license notices, copyright notices, author information, NOTICE files, and other statements required by the original authors in the original code, documentation, configuration, and license files.
+
+   Please respect the copyrights of the original authors and contributors. Do not delete, alter, or intentionally obscure Copyright notices, @author information, license notices, NOTICE information, or similar statements in source files.
+
+   Without prior written permission from YaoShi Data (Wuhan) Co., Ltd., you may not globally replace, delete, or obscure original identifiers such as softcdata, Testudo, or Xuan Gui Zhen in source code, documentation, package names, module names, or project descriptions for the purpose of avoiding copyright attribution, misleading users about the project origin, or confusing brand relationships. Any legal liability arising from such conduct shall be borne by the relevant actor.
+
+5. Reference, Reuse, and Derivative Notices
+
+   If your software, product, service, documentation, website, or other public material references, reuses, adapts, or is based on any part of the Software's code, architecture design, functional implementation, or documentation, you should retain a source attribution notice in the relevant source files, documentation, or a prominent position in your software introduction, and respect the Software's copyright and author statements.
+
+   Recommended attribution:
+
+   "This project/product references or uses portions of the code, design, or functionality of Testudo (Xuan Gui Zhen), originally released by YaoShi Data (Wuhan) Co., Ltd."
+
+6. Limitation of Liability
+
+   You are solely responsible for all risks, disputes, losses, compliance responsibilities, and legal liabilities arising from downloading, installing, deploying, using, modifying, distributing, integrating, operating, or secondarily developing the Software.
+
+   To the maximum extent permitted by law, YaoShi Data (Wuhan) Co., Ltd. shall not be liable for any direct, indirect, incidental, special, punitive, or consequential damages arising from the use of or inability to use the Software, including but not limited to business interruption, data loss, system failure, loss of revenue, third-party claims, or compliance risks.
+
+7. Community Contributions
+
+   If you improve, fix, optimize, or extend the Software, you are welcome to contribute back through issues, pull requests, patches, documentation feedback, or other appropriate means. We encourage open collaboration and joint improvement of the Software ecosystem, subject to the project's contribution guidelines and applicable open source license requirements.
+
+8. Software Copyright Registration
+
+   This project has applied for software copyright registration. Please respect open source, originality, and the work of contributors, and comply with applicable laws and regulations, the Apache License Version 2.0, and these supplemental terms.
+
+9. Community Edition Scope
+
+   The Community Edition of the Software does not limit the number of users or concurrent online users, and may be used for learning, testing, validation, internal use, and project scenarios that comply with these supplemental terms.
+
+   The Software uses a License mechanism to manage certain authorization capabilities and the manageable cluster scale. The Community Edition may be used free of charge within the default authorization scope. If you need to manage more clusters, obtain an Enterprise Edition license, use enterprise-level features, receive commercial support, obtain SLA services, request customization, or obtain other commercial authorization, please contact YaoShi Data (Wuhan) Co., Ltd.
+
+10. Enterprise Edition and Commercial Authorization
+
+   The Community Edition and Enterprise Edition may differ in manageable cluster scale, enterprise-level features, technical support, service guarantees, upgrade and maintenance services, authorization methods, and other aspects. If you need expanded cluster management capabilities or an Enterprise Edition license, please contact us through the contact information below.
+
+Copyright: YaoShi Data (Wuhan) Co., Ltd.
+
+Official website: https://testudo.softcdata.com/
+
+Contact: chenhao@softcdata.com

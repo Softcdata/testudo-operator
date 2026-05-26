@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: disaster-operator-system
+
+resources:
+  - ../../default
+
+# 生产环境镜像
+images:
+  - name: controller
+    newName: 192.168.120.138:5100/disaster-operator
+    newTag: v1.0.0-arm64
+
+# 生产环境配置修改
+patches:
+  - path: manager-patch.yaml

@@ -1,0 +1,21 @@
+apiVersion: testudo.softcdata.com/v1
+kind: Cluster
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: cluster-1
+spec:
+  kubeConfig: "<BASE64_ENCODED_KUBECONFIG>"
+  token: "<OPTIONAL_CLUSTER_TOKEN>"
+---
+apiVersion: testudo.softcdata.com/v1
+kind: Cluster
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: cluster-2
+spec:
+  kubeConfig: "<BASE64_ENCODED_KUBECONFIG>"
+  token: "<OPTIONAL_CLUSTER_TOKEN>"

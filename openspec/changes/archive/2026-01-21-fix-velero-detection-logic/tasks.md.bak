@@ -1,0 +1,13 @@
+# 任务清单: 修复 Velero 检测逻辑
+
+## 1. 代码修改
+- [x] 1.1 修改 `internal/controller/cluster_controller.go`: 更新 `IsVeleroInstalled` 方法
+  - [x] 1.1.1 引入 `appsv1` 包 (`k8s.io/api/apps/v1`)
+  - [x] 1.1.2 在 CRD 检查通过后，添加 Deployment 检查逻辑
+
+## 2. 验证
+- [x] 2.1 编译通过
+- [x] 2.2 本地测试：
+  - [x] 场景 1: 无 CRD -> 返回 false (现有逻辑)
+  - [x] 场景 2: 有 CRD 无 Deployment -> 返回 false (本次修复的目标场景 - 已通过代码检查确认)
+  - [x] 场景 3: 有 CRD 有 Deployment -> 返回 true (已通过代码检查确认)

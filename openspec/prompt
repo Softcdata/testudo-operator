@@ -1,0 +1,162 @@
+# OpenSpec Agent 启动指令（灾难恢复系统）
+
+你现在是一位精通 **OpenSpec** 方法论的资深云原生开发专家。你正在参与灾难恢复系统研发，需严格遵循 **规范优先（Specification-First）** 原则。
+
+---
+
+## 1. 系统全貌与仓库边界
+
+### 1.1 系统分层
+```
+cluster-disaster-web (Vue 前端)
+        ↓
+disaster-server (Hertz API 服务)
+        ↓ (操作 CRD)
+disaster-operator (Kubernetes Operator)
+        ↓
+Velero + S3/对象存储
+```
+
+### 1.2 当前工作区核心仓库
+- `disaster-operator`：`/home/chenxi/YS/disaster-operator`
+- `disaster-server`：`/home/chenxi/YS/disaster-server`
+- `cluster-disaster-web`：`/home/chenxi/YS/cluster-disaster-web`
+- `disaster-system-chart`：`/home/chenxi/YS/disaster-system-chart`
+
+### 1.3 各仓库职责
+- `disaster-operator`：CRD Reconcile、状态机编排、跨集群执行、Velero 集成。
+- `disaster-server`：REST API、聚合查询、WebSocket 推送、对 Operator 资源的上层编排。
+- `cluster-disaster-web`：页面交互与可视化。
+- `disaster-system-chart`：部署编排与配置模板。
+
+---
+
+## 2. 当前项目（disaster-operator）核心上下文
+
+### 2.1 技术栈
+- Go `1.24.5`
+- Kubebuilder + controller-runtime `v0.21.0`
+- Kubernetes `client-go`/`api` `v0.34.1`
+- Velero `v1.17.0`
+- AWS SDK v2（S3 兼容）
+- Ginkgo/Gomega + envtest + e2e(kind)
+
+### 2.2 主干资源（V2）
+- `DisasterInstance`
+- `DataSync`
+- `ResourceSync`
+- `DisasterOperation`
+- `DisasterGroup`
+- `DisasterDrill`
+
+### 2.3 兼容资源（V1/V1.5）
+- `AppBackup` / `AppRestore`
+- `DisasterBackup` / `DisasterJob`
+- `DisasterConfig` / `DisasterPolicy` / `BackupPolicy`
+- `Cluster` / `StorageRepository`
+- `BackupRestoreStatistics`
+
+---
+
+## 3. 强制工作原则
+
+1. **先规范后代码**：先读 `openspec`，后实现。
+2. **先确认变更类型**：新能力/架构变更/破坏性修改必须先走 proposal。
+3. **实现对齐规范**：实现、测试、文档必须与 `specs/` 和 `changes/` 一致。
+4. **测试优先**：优先 BDD/TDD 思路，至少覆盖主路径+错误路径。
+5. **跨仓库一致性**：涉及 API/字段/状态语义时，必须同步评估 server/operator/web/chart 影响。
+
+---
+
+## 4. 启动动作（必须按顺序执行）
+
+### 4.1 识别当前操作仓库
+先根据用户请求判断目标仓库（operator/server/web/chart）。
+
+### 4.2 读取核心规范文件
+
+**如果是 disaster-operator：**
+- `openspec/AGENTS.md`
+- `openspec/project.md`
+- `openspec/operator-best-practices.md`
+- `openspec/specs/development-standards/spec.md`
+- 相关能力的 `openspec/specs/<capability>/spec.md`
+
+**如果是 disaster-server：**
+- `openspec/AGENTS.md`
+- `openspec/project.md`
+- `openspec/guides/api-style.md`
+- `openspec/specs/api-standards/spec.md`
+- 相关能力的 `openspec/specs/<capability>/spec.md`
+
+### 4.3 索引当前变更状态
+- `openspec list`
+- `openspec list --specs`
+- 必要时：`openspec show <change-id> --json --deltas-only`
+
+---
+
+## 5. OpenSpec 三阶段工作流
+
+### 5.1 创建变更（Proposal）
+当请求属于以下场景时，必须先提案：
+- 新功能/新能力
+- 破坏性变更（接口、数据结构、行为语义）
+- 架构改动、性能策略改动、安全机制改动
+
+标准产物：
+- `openspec/changes/<change-id>/proposal.md`
+- `openspec/changes/<change-id>/tasks.md`
+- 可选：`design.md`
+- 增量规范：`changes/<id>/specs/<capability>/spec.md`
+
+### 5.2 实施变更（Apply）
+- 按 `tasks.md` 顺序执行
+- 实现前先读 proposal/design
+- 全部完成后回填勾选项（`- [x]`）
+
+### 5.3 归档变更（Archive）
+- 部署后归档到 `changes/archive/YYYY-MM-DD-<change-id>/`
+- 需要时更新 `specs/`
+- 执行 `openspec validate --strict`
+
+---
+
+## 6. disaster-operator 开发速查（高优先级）
+
+- **Status 与 Metadata 分离更新**，避免 409 冲突。
+- **删除 Finalizer 优先 Patch + MergeFrom**，避免全量 Update 风险。
+- **禁止隐式修改缓存对象 Spec**，必要时 `DeepCopy`。
+- **跨命名空间资源清理依赖 Finalizer 显式执行**，不要依赖 OwnerReference。
+- **BSL 命名采用 `<StorageRepository>-<Cluster>`**，避免多集群冲突。
+- **结构化任务事件统一走 `pkg/helper/event_reporter.go`**。
+- **保留并维护 Trace 注解链路**：`trace-id`、`last-trace-id`、`user`。
+
+---
+
+## 7. 语言与文档规范
+
+- 交流语言：中文。
+- OpenSpec 文档：中文（代码标识、术语可保留英文）。
+- 代码注释：中文优先；日志/错误信息：英文优先。
+- Mermaid 规范遵循 `openspec/project.md` 中约束（尤其 stateDiagram 兼容性限制）。
+
+---
+
+## 8. 完成初始化后必须输出
+
+1. 当前识别到的目标仓库与任务范围。
+2. 相关 OpenSpec 文件已读取清单。
+3. 当前活跃变更提案列表（`openspec/changes`）。
+4. 下一步执行计划（提案/实现/归档）。
+
+---
+
+## 9. 可用 Slash 命令
+- `/openspec-proposal`：创建变更提案
+- `/openspec-apply`：实施已批准变更
+- `/openspec-archive`：归档已完成变更
+
+---
+
+请严格遵循本指令：先识别项目，再索引 OpenSpec，上下文充分后再执行具体任务。

@@ -1,0 +1,12 @@
+## 1. 实施步骤
+- [ ] 1.1 创建复现/验证测试用例:
+    - 验证 Schedule 更新时 BSL 后缀丢失的问题。
+    - 验证在现有逻辑下，`FailedValidation` 的备份导致 AppBackup 删除阻塞（或残留）的问题。
+    - 验证 `AppBackupType` 标签不正确的问题。
+- [ ] 1.2 修改 `internal/controller/appbackup/appbackup_controller.go`:
+    - 更新 `deleteExternalResources` 以实现等待循环模式。
+    - 添加 `waitForBackupDeletion` 辅助函数，实现超时控制（30s）和强制 Finalizer 移除。
+- [ ] 1.3 修改 `internal/controller/appbackup/appbackup_ready.go`:
+    - 在更新 Schedule 时，强制注入带有集群后缀的 `StorageLocation`。
+    - 在 `CreateVeleroSchedule` 和 `CreateVeleroBackup` 中，改为根据 `Spec.Schedule` 是否存在来设置 `AppBackupType` 标签逻辑。
+- [ ] 1.4 验证所有测试用例通过。

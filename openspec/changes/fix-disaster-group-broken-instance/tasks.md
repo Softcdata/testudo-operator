@@ -1,0 +1,6 @@
+- [x] 1. 更新 `DisasterInstanceReconciler.handleDeletion`：在删除前列举所有 `DisasterGroup`，检查该实例是否被任意 `DisasterGroup` 的 `Spec.Levels` 所包含。如果被包含且没有添加强制删除标签，拒绝删除并触发 DeletionBlocked 警告事件。
+- [x] 2. 修改 `disaster-server` 的 `GroupHandler.listGroupInstances` 处理函数：遇到 `errors.IsNotFound` 或错误时不再执行 `continue` 跳过，而是向列表中注入并返回一个包含 `FsmState: "NotFound"` 的 DTO 对象。
+- [x] 3. 修改 `GroupHandler.collectInstanceSummaries` (获取详情用到) 和 `collectInstanceSummariesWithCache` (获取列表用到)：如果实例不存在，将其 `FsmState` 从 `Unknown` 修改为明确的 `NotFound` 以方便前后端对齐。
+- [x] 4. 修改 `disaster-operator` 的 `DisasterOperationReconciler.handleGroupOperation` 中遇到实例不存在时的容灾策略逻辑，在子实例创建失败或找不到了的时候发送明确警告。
+- [x] 5. 校验 `disaster-server` 的 `PUT /groups/:name`接口逻辑：确保其已对改变 `Levels` 数组和 `description` 说明标签提供完美的覆盖更新支持，如果缺少对应处理则补充开发。
+- [x] 6. 测试: 正常场景删除、被引用实例免强删测试，并执行接口测试（编辑移除损坏实例）确保服务器返回正确的状态。

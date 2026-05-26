@@ -1,0 +1,147 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: disasterpolicies.testudo.softcdata.com
+spec:
+  group: testudo.softcdata.com
+  names:
+    kind: DisasterPolicy
+    listKind: DisasterPolicyList
+    plural: disasterpolicies
+    singular: disasterpolicy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: The type of the policy
+      jsonPath: .spec.type
+      name: Type
+      type: string
+    - description: The schedule of the policy
+      jsonPath: .spec.schedule
+      name: Schedule
+      type: string
+    - description: The state of the policy
+      jsonPath: .spec.state
+      name: State
+      type: string
+    - description: The lifecycle phase of the policy
+      jsonPath: .status.phase
+      name: Phase
+      type: string
+    - description: The last time the policy was executed
+      jsonPath: .status.lastExecutionTime
+      name: LastExecution
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: DisasterPolicy is the Schema for the disasterpolicies API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of DisasterPolicy
+            properties:
+              description:
+                description: Description provides a human-readable description of
+                  the policy
+                type: string
+              schedule:
+                description: Schedule is a Cron expression defining when to run the
+                  policy
+                type: string
+              startTime:
+                description: StartTime specifies when the policy should start taking
+                  effect
+                format: date-time
+                type: string
+              state:
+                description: State specifies whether the policy is enabled or disabled
+                enum:
+                - Enabled
+                - Disabled
+                type: string
+              ttl:
+                description: |-
+                  TTL defines how long Velero backups created by this AutoBackup policy are retained.
+                  Only effective when type is AutoBackup.
+                type: string
+              type:
+                description: Type specifies the type of the policy
+                enum:
+                - AutoBackup
+                - DataSync
+                - ResourceSync
+                type: string
+            required:
+            - schedule
+            - state
+            - type
+            type: object
+          status:
+            description: status defines the observed state of DisasterPolicy
+            properties:
+              lastEventPhase:
+                description: LastEventPhase records the last event phase for debouncing
+                type: string
+              lastExecutionTime:
+                description: LastExecutionTime records the last time the policy was
+                  executed
+                format: date-time
+                type: string
+              lastState:
+                description: LastState records the last observed policy state (Enabled/Disabled)
+                enum:
+                - Enabled
+                - Disabled
+                type: string
+              message:
+                description: Message provides a detailed message about the current
+                  status
+                type: string
+              nextExecutionTime:
+                description: NextExecutionTime records the next scheduled execution
+                  time
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration records the generation that was last
+                  processed
+                format: int64
+                type: integer
+              phase:
+                description: Phase indicates the lifecycle phase of the policy (Active,
+                  Deleting)
+                enum:
+                - Active
+                - Deleting
+                type: string
+              reason:
+                description: Reason indicates the reason for the current status
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

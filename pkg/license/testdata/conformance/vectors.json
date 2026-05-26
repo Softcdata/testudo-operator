@@ -1,0 +1,334 @@
+{
+  "schemaVersion": 1,
+  "profile": "disaster-platform-license-jcs-v1",
+  "canonicalization": "RFC 8785/JCS-compatible object member ordering and string escaping, constrained by the disaster license schema: duplicate object names are rejected, only integer JSON numbers are accepted, and the signature member is removed before signing. Signatures use Ed25519 and unpadded base64url.",
+  "now": "2026-06-01T00:00:00Z",
+  "currentFingerprint": "sha256:0123456789abcdef",
+  "trustedKeys": [
+    {
+      "keyId": "conformance-ed25519-2026-01",
+      "publicKeyBase64": "I7xUkSwebpLEqGglyGfif/3FVb/71CRPF6Jqv//ull0="
+    }
+  ],
+  "canonicalCases": [
+    {
+      "name": "active license removes signature and sorts keys",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2027-05-01T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:0123456789abcdef",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "conformance-ed25519-2026-01",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -1
+        },
+        "notBefore": "2026-05-01T00:00:00Z",
+        "product": "disaster-platform",
+        "signature": "Vki3MIvt8Wahx6c_upkaDeEyhs_WN0ekRL3h_G5SFatpdqkyZpelCdvRq2jif9-MGEDwJCdbOjZ8KvR0VOl5Dw",
+        "version": 1
+      },
+      "wantPayload": "{\"customer\":{\"contact\":\"qa@example.com\",\"name\":\"Conformance Corp\"},\"edition\":\"enterprise\",\"expiresAt\":\"2027-05-01T00:00:00Z\",\"features\":[\"cluster.unlimited\"],\"fingerprint\":\"sha256:0123456789abcdef\",\"fingerprintVersion\":\"k8s-v1\",\"issuedAt\":\"2026-05-01T00:00:00Z\",\"issuer\":\"conformance\",\"keyId\":\"conformance-ed25519-2026-01\",\"licenseId\":\"LIC-CONFORMANCE-0001\",\"limits\":{\"maxClusters\":-1},\"notBefore\":\"2026-05-01T00:00:00Z\",\"product\":\"disaster-platform\",\"version\":1}"
+    },
+    {
+      "name": "duplicate object names are rejected",
+      "raw": "{\"version\":1,\"version\":1}",
+      "wantErrorContains": "duplicate object member"
+    },
+    {
+      "name": "non-integer JSON numbers are rejected by the license profile",
+      "raw": "{\"value\":1.5}",
+      "wantErrorContains": "non-integer JSON number"
+    }
+  ],
+  "verificationCases": [
+    {
+      "name": "active unlimited license",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2027-05-01T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:0123456789abcdef",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "conformance-ed25519-2026-01",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -1
+        },
+        "notBefore": "2026-05-01T00:00:00Z",
+        "product": "disaster-platform",
+        "signature": "Vki3MIvt8Wahx6c_upkaDeEyhs_WN0ekRL3h_G5SFatpdqkyZpelCdvRq2jif9-MGEDwJCdbOjZ8KvR0VOl5Dw",
+        "version": 1
+      },
+      "wantState": "Active",
+      "wantReason": "",
+      "wantFingerprintMatched": true,
+      "wantMaxClusters": -1
+    },
+    {
+      "name": "invalid signature",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2027-05-01T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:0123456789abcdef",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "conformance-ed25519-2026-01",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -1
+        },
+        "notBefore": "2026-05-01T00:00:00Z",
+        "product": "disaster-platform",
+        "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "version": 1
+      },
+      "wantState": "InvalidSignature",
+      "wantReason": "LicenseInvalid",
+      "wantFingerprintMatched": false,
+      "wantMaxClusters": 2
+    },
+    {
+      "name": "unknown key",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2027-05-01T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:0123456789abcdef",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "unknown-key",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -1
+        },
+        "notBefore": "2026-05-01T00:00:00Z",
+        "product": "disaster-platform",
+        "signature": "nEH0_q8f_Kh_QdkG4ZENRjDVBIe5lpdM1CdBgDdQZTBvOZg0Z9cefUPxsDS-vZGtjzjn9YqN1fDxQGtEf4M4Cg",
+        "version": 1
+      },
+      "wantState": "UnknownKey",
+      "wantReason": "LicenseUnknownKey",
+      "wantFingerprintMatched": false,
+      "wantMaxClusters": 2
+    },
+    {
+      "name": "fingerprint mismatch",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2027-05-01T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:ffffffffffffffff",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "conformance-ed25519-2026-01",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -1
+        },
+        "notBefore": "2026-05-01T00:00:00Z",
+        "product": "disaster-platform",
+        "signature": "TRJGyAm6h71Ar2PjyQfMXGJwbKYUi1ApEKQ3fASN259rndwH78rwEKh5D55Wd2RgXqhfkMXHowmEYE_r3RYoBg",
+        "version": 1
+      },
+      "wantState": "FingerprintMismatch",
+      "wantReason": "LicenseFingerprintMismatch",
+      "wantFingerprintMatched": false,
+      "wantMaxClusters": 2
+    },
+    {
+      "name": "expired license",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2026-05-15T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:0123456789abcdef",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "conformance-ed25519-2026-01",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -1
+        },
+        "notBefore": "2026-05-01T00:00:00Z",
+        "product": "disaster-platform",
+        "signature": "Y8mN9QVbxq3wwb3XQNQfvqtdgYgOS4cpqBY_EPoett3CzWyDwrUkx8G651OKyeppO-1AgHDOJt1OjwW-iCYPCA",
+        "version": 1
+      },
+      "wantState": "Expired",
+      "wantReason": "LicenseExpired",
+      "wantFingerprintMatched": false,
+      "wantMaxClusters": 2
+    },
+    {
+      "name": "not yet valid license",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2027-05-01T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:0123456789abcdef",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "conformance-ed25519-2026-01",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -1
+        },
+        "notBefore": "2027-01-01T00:00:00Z",
+        "product": "disaster-platform",
+        "signature": "0WtA-iVVVxiNre_0-A2Ptm2gXLlsYoC9cRE8ReKpHpeodix9B2U9xdUsRCk1b6JE4OWt-TbxrGxO3HYY-ZTzCQ",
+        "version": 1
+      },
+      "wantState": "NotYetValid",
+      "wantReason": "LicenseInvalid",
+      "wantFingerprintMatched": false,
+      "wantMaxClusters": 2
+    },
+    {
+      "name": "unsupported version",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2027-05-01T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:0123456789abcdef",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "conformance-ed25519-2026-01",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -1
+        },
+        "notBefore": "2026-05-01T00:00:00Z",
+        "product": "disaster-platform",
+        "signature": "x7SY-eIFYkxjglcNj8mavFrdEYr5G1m-o97xLGSOOlFFltu-64zXMwfcYeIhyRQwU42dyff3---CJK-IavpxCA",
+        "version": 2
+      },
+      "wantState": "UnsupportedVersion",
+      "wantReason": "LicenseUnsupportedVersion",
+      "wantFingerprintMatched": false,
+      "wantMaxClusters": 2
+    },
+    {
+      "name": "product mismatch",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2027-05-01T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:0123456789abcdef",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "conformance-ed25519-2026-01",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -1
+        },
+        "notBefore": "2026-05-01T00:00:00Z",
+        "product": "other-product",
+        "signature": "btOzWM9pa5UkrHDbKrIuzA1LcmiVPVSWHucKjVadbWhGbhRWM-3v2MVK0CtOozBaTleFxo0ouzMb_OzpZwqjCw",
+        "version": 1
+      },
+      "wantState": "ProductMismatch",
+      "wantReason": "LicenseProductMismatch",
+      "wantFingerprintMatched": false,
+      "wantMaxClusters": 2
+    },
+    {
+      "name": "malformed limits",
+      "license": {
+        "customer": {
+          "contact": "qa@example.com",
+          "name": "Conformance Corp"
+        },
+        "edition": "enterprise",
+        "expiresAt": "2027-05-01T00:00:00Z",
+        "features": [
+          "cluster.unlimited"
+        ],
+        "fingerprint": "sha256:0123456789abcdef",
+        "fingerprintVersion": "k8s-v1",
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "issuer": "conformance",
+        "keyId": "conformance-ed25519-2026-01",
+        "licenseId": "LIC-CONFORMANCE-0001",
+        "limits": {
+          "maxClusters": -2
+        },
+        "notBefore": "2026-05-01T00:00:00Z",
+        "product": "disaster-platform",
+        "signature": "qEr3aDZUGV9pGUDeAepuzLfRJeKYlyqriSgVXzTmh8prQnPJqGEZsqsUIKwbDWHFYrTRvr7CrBulARyi3v-2Bw",
+        "version": 1
+      },
+      "wantState": "Malformed",
+      "wantReason": "LicenseInvalid",
+      "wantFingerprintMatched": false,
+      "wantMaxClusters": 2
+    }
+  ]
+}

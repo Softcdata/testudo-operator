@@ -1,0 +1,13 @@
+apiVersion: testudo.softcdata.com/v1
+kind: AppRestore
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: apprestore-sample
+  namespace:  disaster-system
+spec:
+  backupSource: "cluster170backup"
+  cluster: "cluster-ip170"
+  template:
+    backupName: "app-backup-cluster170backup-1765182111"

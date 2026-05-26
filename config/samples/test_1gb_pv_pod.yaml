@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: test-1gb-pv
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  local:
+    path: "/tmp/test-data-1gb"
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - chenhao
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-1gb-pvc
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  selector:
+    matchLabels:
+      type: local
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-1gb-pod
+  annotations:
+    # 强制 Velero 使用文件系统备份(Restic/Kopia)来备份 hostPath 卷
+    backup.velero.io/backup-volumes: data-volume
+  labels:
+    app: test-1gb-app
+spec:
+  volumes:
+    - name: data-volume
+      persistentVolumeClaim:
+        claimName: test-1gb-pvc
+  initContainers:
+  - name: generate-data
+    image: busybox
+    # 使用 dd 命令生成 1GB 的空文件 (1024 * 1MB)
+    command: ['sh', '-c', 'if [ ! -f /data/1gb.dat ]; then echo "Generating 1GB file..."; dd if=/dev/zero of=/data/1gb.dat bs=1M count=1024; echo "Done."; else echo "File exists."; fi']
+    volumeMounts:
+    - mountPath: "/data"
+      name: data-volume
+  containers:
+    - name: app
+      image: busybox
+      # 挂起容器以便查看
+      command: ['sh', '-c', 'echo "Pod is running. Data is at /data/1gb.dat"; sleep 3600']
+      volumeMounts:
+        - mountPath: "/data"
+          name: data-volume

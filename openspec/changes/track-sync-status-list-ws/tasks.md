@@ -1,0 +1,4 @@
+- [ ] 修改 `DisasterInstanceDTO`，增加 `DataSyncStatus` 和 `ResourceSyncStatus` 字段 <!-- id: types-update -->
+- [ ] 优化 `listInstances` Handler，实现 DataSync/ResourceSync 的批量查询与聚合 <!-- id: list-handler -->
+- [ ] 增强 WebSocket 监听逻辑，支持监听 DataSync/ResourceSync 变更并推送聚合事件 <!-- id: ws-enhancement -->
+- [ ] 验证列表页数据准确性及 WS 实时刷新功能 <!-- id: verify -->

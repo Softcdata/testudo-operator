@@ -1,0 +1,17 @@
+apiVersion: testudo.softcdata.com/v1
+kind: DisasterPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  namespace: disaster-system
+  name: disasterpolicy-sample
+spec:
+  # TODO(user): Add fields here
+  schedule: "*/5 * * * *"
+  type: AutoBackup
+  ttl: 720h
+  startTime: "2025-01-01T00:00:00Z"
+  description: "This is a sample DisasterPolicy"
+  state: Disabled
+

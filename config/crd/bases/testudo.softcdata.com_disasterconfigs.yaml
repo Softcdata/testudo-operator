@@ -1,0 +1,160 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: disasterconfigs.testudo.softcdata.com
+spec:
+  group: testudo.softcdata.com
+  names:
+    kind: DisasterConfig
+    listKind: DisasterConfigList
+    plural: disasterconfigs
+    shortNames:
+    - dc
+    singular: disasterconfig
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - description: 灾备源集群名称
+      jsonPath: .spec.sourceCluster
+      name: SourceCluster
+      type: string
+    - description: 灾备目标集群名称
+      jsonPath: .spec.targetCluster
+      name: TargetCluster
+      type: string
+    - description: 灾备配置状态
+      jsonPath: .status.status
+      name: Status
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: DisasterConfig is the Schema for the disasterconfigs API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of DisasterConfig
+            properties:
+              dataSyncInterval:
+                description: 'Deprecated: Use DataSyncPolicy instead'
+                type: integer
+              dataSyncPolicy:
+                description: |-
+                  DataSyncPolicy is the name of the DisasterPolicy for data synchronization
+                  The referenced policy must have type=DataSync
+                type: string
+              dataSyncType:
+                default: fsb
+                description: |-
+                  DataSyncType specifies the data synchronization type
+                  Options: "fsb" (File System Backup), "snapshot", "none", "external"
+                type: string
+              imageRewrite:
+                description: ImageRewrite defines image source mapping strategy for
+                  restore workflows.
+                properties:
+                  applyTo:
+                    description: |-
+                      ApplyTo controls which restore paths apply image rewrite.
+                      Supported values: resourceSync, drill.
+                    items:
+                      description: ImageRewriteApplyTarget defines where image rewrite
+                        rules should take effect.
+                      type: string
+                    type: array
+                  enabled:
+                    description: Enabled toggles image rewrite behavior.
+                    type: boolean
+                  mappings:
+                    description: Mappings defines source image source alias -> target
+                      image source alias rules.
+                    items:
+                      description: ImageSourceMapping defines source->target image
+                        source alias mapping.
+                      properties:
+                        sourceImageSource:
+                          description: SourceImageSource references Cluster.spec.imageSources[].name
+                            on source cluster.
+                          type: string
+                        targetImageSource:
+                          description: TargetImageSource references Cluster.spec.imageSources[].name
+                            on target cluster.
+                          type: string
+                      required:
+                      - sourceImageSource
+                      - targetImageSource
+                      type: object
+                    type: array
+                  unmatchedPolicy:
+                    description: |-
+                      UnmatchedPolicy controls behavior when image is not matched by any mapping.
+                      Supported values: Fail, Keep. Default is Fail.
+                    enum:
+                    - Fail
+                    - Keep
+                    type: string
+                type: object
+              resourceSyncPolicy:
+                description: |-
+                  ResourceSyncPolicy is the name of the DisasterPolicy for resource synchronization
+                  The referenced policy must have type=ResourceSync
+                type: string
+              resourcesSyncInterval:
+                description: 'Deprecated: Use ResourceSyncPolicy instead'
+                type: integer
+              resourcesSyncPolicy:
+                description: 'Deprecated: Not used in V2'
+                type: integer
+              sourceCluster:
+                description: SourceCluster is the name of the source cluster (Cluster
+                  CR)
+                type: string
+              storageRepository:
+                description: StorageRepository is the name of the storage repository
+                  (StorageRepository CR)
+                type: string
+              targetCluster:
+                description: TargetCluster is the name of the target cluster (Cluster
+                  CR)
+                type: string
+            required:
+            - sourceCluster
+            - storageRepository
+            - targetCluster
+            type: object
+          status:
+            description: status defines the observed state of DisasterConfig
+            properties:
+              message:
+                type: string
+              reason:
+                type: string
+              status:
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

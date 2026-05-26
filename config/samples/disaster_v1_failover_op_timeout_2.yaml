@@ -1,0 +1,8 @@
+apiVersion: testudo.softcdata.com/v1
+kind: DisasterOperation
+metadata:
+  name: timeout-op-2
+spec:
+  instanceName: timeout-instance
+  operationType: failover
+  timeoutMinutes: 1

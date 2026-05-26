@@ -1,0 +1,16 @@
+apiVersion: testudo.softcdata.com/v1
+kind: StorageRepository
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: disaster
+  namespace:  disaster-system
+spec:
+  bucket: "disaster"
+  region: "rustfs"
+  endpoint: http://minio.example.com:9000
+  accessKey: "<S3_ACCESS_KEY>"
+  secretKey: "<S3_SECRET_KEY>"
+  storageType: "s3"
+

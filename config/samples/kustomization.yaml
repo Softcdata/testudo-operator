@@ -1,0 +1,13 @@
+## Append samples of your project ##
+resources:
+- disaster_v1_disasterbackup.yaml
+- disaster_v1_cluster.yaml
+- disaster_v1_disasterconfig.yaml
+- disaster_v1_disasterjob.yaml
+- disaster_v1_application.yaml
+- disaster_v1_backuppolicy.yaml
+- disaster_v1_storagerepository.yaml
+- disaster_v1_appbackup.yaml
+- disaster_v1_apprestore.yaml
+- disaster_v1_disasterpolicy.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

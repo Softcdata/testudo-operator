@@ -1,0 +1,12 @@
+apiVersion: testudo.softcdata.com/v1
+kind: DisasterDrill
+metadata:
+  name: drills1
+  namespace: disaster-system
+  labels:
+    testudo.softcdata.com/instance: pppp1-dr-instance-test1
+spec:
+  instanceName: pppp1-dr-instance-test1
+  namespaceMapping:
+    pppp5: pppp522
+  targetCluster: e2e-cluster-source

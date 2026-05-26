@@ -1,0 +1,11 @@
+apiVersion: testudo.softcdata.com/v1
+kind: AppBackup
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: appbackup-sample
+  namespace:  disaster-system
+
+spec:
+  # TODO(user): Add fields here

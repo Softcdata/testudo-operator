@@ -1,0 +1,12 @@
+apiVersion: testudo.softcdata.com/v1
+kind: DisasterJob
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: dj-test
+  namespace:  disaster-system
+spec:
+  disasterBackup: db-test
+  syncType: forward
+  scheduleType: "once"

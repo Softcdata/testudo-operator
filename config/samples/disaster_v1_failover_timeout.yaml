@@ -1,0 +1,20 @@
+apiVersion: testudo.softcdata.com/v1
+kind: DisasterConfig
+metadata:
+  name: timeout-config
+spec:
+  sourceCluster: e2e-cluster-source
+  targetCluster: e2e-cluster-target
+  storageRepository: "test-repo"
+  dataSyncPolicy: "schedule-every-10m"
+  resourceSyncPolicy: "schedule-every-10m"
+---
+apiVersion: testudo.softcdata.com/v1
+kind: DisasterInstance
+metadata:
+  name: timeout-instance
+spec:
+  config: timeout-config
+  operationTimeoutMinutes: 1
+  namespaces:
+  - "default"

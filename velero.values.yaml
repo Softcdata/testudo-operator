@@ -1,0 +1,68 @@
+image:
+  repository: velero/velero
+  tag: v1.17.0
+  pullPolicy: IfNotPresent
+  # 公网官方镜像，避免私有仓库凭证缺失导致 ImagePullBackOff
+  imagePullSecrets: []
+
+kubectl:
+  image:
+    repository: registry.example.com/disaster/kubectl  #使用逻辑apply velero CRD 弃用（helm 使用--no-hook跳过CRD检查）
+    tag: "1.20.14"
+
+deployNodeAgent: true
+
+configuration:
+  backupStorageLocation:
+  - name:
+    provider: "aws"
+    bucket: "velero"
+    caCert: ""
+    prefix: ""
+    default: true
+    validationFrequency: 15s
+    accessMode: ReadWrite
+    config: {}
+    annotations: {}
+
+  volumeSnapshotLocation:
+  - name:
+    provider: "aws"
+    config: {}
+    annotations: {}
+    
+  
+# 高可用与性能优化设置
+# priorityClassName: velero-high-priority
+
+extraArgs:
+  - --item-block-worker-count=4
+  - --client-qps=200
+  - --client-burst=400
+  - --backup-sync-period=15s
+  - --item-operation-sync-frequency=3s
+
+nodeAgent:
+  # chart 使用 deployNodeAgent: true 作为渲染条件，此处保持结构供后续扩展
+  podVolumePath: /var/lib/kubelet/pods
+  pluginVolumePath: /var/lib/kubelet/plugins
+  useScratchEmptyDir: true
+  extraArgs: []
+  # priorityClassName: velero-high-priority
+
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.13.0
+    imagePullPolicy: IfNotPresent
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+
+
+# 新增：ServiceAccount 配置
+serviceAccount:
+  create: true
+  name: velero
+
+rbac:
+  create: true

@@ -1,0 +1,24 @@
+# 任务清单: 修复 Velero 检测逻辑与安装鲁棒性
+
+## 1. 代码修改
+- [x] 1.1 修改 `internal/controller/cluster_controller.go`: 更新 `IsVeleroInstalled` 方法
+  - [x] 1.1.1 引入 `appsv1` 包 (`k8s.io/api/apps/v1`)
+  - [x] 1.1.2 在 CRD 检查通过后，添加 Deployment 检查逻辑
+  - [x] 1.1.3 修复错误吞没问题，确保连接错误能正确向上抛出
+- [x] 1.2 增强 Helm 安装逻辑
+  - [x] 1.2.1 使用 `helm upgrade --install` 替代 `helm install` 实现幂等性
+  - [x] 1.2.2 增加 `--no-hooks` 跳过前置检查，防止死锁
+  - [x] 1.2.3 增加 `--atomic` 和 `--cleanup-on-fail` 确保失败自动回滚
+  - [x] 1.2.4 增加 `--timeout 10m` 避免超时
+  - [x] 1.2.5 修复临时 kubeconfig 文件权限为 0600
+
+## 2. 验证
+- [x] 2.1 编译通过
+- [x] 2.2 单元测试：`TestClusterController` 全部通过
+- [x] 2.3 场景覆盖：
+  - [x] 无安装 -> 正常安装
+  - [x] 安装失败残留 -> 自动清理并重新安装
+  - [x] 版本已存在 -> 正常升级
+  - [x] 检测逻辑异常 -> 正确报错不误判
+- [x] 2.4 线上故障修复指引
+  - [x] 遇到 `another operation is in progress`，需手动执行 `kubectl -n velero delete secrets -l owner=helm,name=velero` 清除旧锁。

@@ -1,0 +1,243 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: datasyncs.testudo.softcdata.com
+spec:
+  group: testudo.softcdata.com
+  names:
+    kind: DataSync
+    listKind: DataSyncList
+    plural: datasyncs
+    shortNames:
+    - ds
+    singular: datasync
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: 父级 DisasterInstance
+      jsonPath: .spec.instance
+      name: Instance
+      type: string
+    - description: 当前状态
+      jsonPath: .status.state
+      name: State
+      type: string
+    - description: 上次同步时间
+      jsonPath: .status.lastSyncTime
+      name: LastSync
+      type: date
+    - description: 是否暂停
+      jsonPath: .spec.paused
+      name: Paused
+      type: boolean
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          DataSync 是数据同步的 API Schema
+          使用 Trafficless Restore 方案管理 PVC 数据同步
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: DataSyncSpec 定义 DataSync 的期望状态
+            properties:
+              instance:
+                description: Instance 父级 DisasterInstance 的名称
+                type: string
+              paused:
+                description: Paused 指示是否暂停同步
+                type: boolean
+              trafficlessConfig:
+                description: TrafficlessConfig 定义 Trafficless Restore 的设置
+                properties:
+                  command:
+                    description: 'Command 隐形 Pod 的启动命令（默认: ["sleep", "3600"]）'
+                    items:
+                      type: string
+                    type: array
+                  image:
+                    default: busybox:latest
+                    description: 'Image 隐形 Pod 使用的容器镜像（默认: busybox:latest）'
+                    type: string
+                  removeLabels:
+                    description: RemoveLabels 需要移除的标签列表，防止 Pod 接收服务流量
+                    items:
+                      type: string
+                    type: array
+                type: object
+              trigger:
+                description: Trigger 定义同步的触发方式
+                properties:
+                  manual:
+                    description: |-
+                      Manual 手动触发时间戳
+                      设置为当前时间以触发立即同步
+                    type: string
+                  schedule:
+                    description: |-
+                      Schedule 定时调度表达式（从 DisasterPolicy 继承）
+                      只读字段，由引用的策略填充
+                    type: string
+                type: object
+            required:
+            - instance
+            type: object
+          status:
+            description: DataSyncStatus 定义 DataSync 的观测状态
+            properties:
+              conditions:
+                description: Conditions 最新的观测状态
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              history:
+                description: History 记录最近的同步历史
+                items:
+                  description: SyncHistoryRecord 定义单次同步的历史记录
+                  properties:
+                    backupName:
+                      description: BackupName 关联的 AppBackup 名称
+                      type: string
+                    backupResourceCount:
+                      description: BackupResourceCount 备份资源数
+                      type: integer
+                    completionTime:
+                      description: CompletionTime 同步结束时间
+                      format: date-time
+                      type: string
+                    duration:
+                      description: Duration 同步耗时
+                      type: string
+                    restoreName:
+                      description: RestoreName 关联的 AppRestore 名称 (如果有)
+                      type: string
+                    restoreResourceCount:
+                      description: RestoreResourceCount 恢复资源数
+                      type: integer
+                    startTime:
+                      description: StartTime 同步开始时间
+                      format: date-time
+                      type: string
+                    status:
+                      description: Status 同步结果状态 (Completed/Failed)
+                      type: string
+                  type: object
+                type: array
+              lastBackupName:
+                description: LastBackupName 上次创建的 AppBackup 名称
+                type: string
+              lastRestoreName:
+                description: LastRestoreName 上次创建的 AppRestore 名称
+                type: string
+              lastSyncTime:
+                description: LastSyncTime 上次同步时间
+                format: date-time
+                type: string
+              message:
+                description: Message 人类可读错误描述
+                type: string
+              reason:
+                description: Reason 机器可读错误码
+                type: string
+              state:
+                description: State 当前同步状态
+                type: string
+              trafficlessPods:
+                description: TrafficlessPods 当前隐形 Pod 列表
+                items:
+                  description: TrafficlessPodStatus 表示隐形 Pod 的状态
+                  properties:
+                    name:
+                      description: Name Pod 名称
+                      type: string
+                    namespace:
+                      description: Namespace Pod 所在命名空间
+                      type: string
+                    phase:
+                      description: Phase Pod 阶段（Running, Completed 等）
+                      type: string
+                    pvcName:
+                      description: PVCName 该 Pod 挂载的 PVC 名称
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

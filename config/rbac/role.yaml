@@ -1,0 +1,107 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - testudo.softcdata.com
+  resources:
+  - appbackups
+  - apprestores
+  - backuppolicies
+  - backuprestorestatisticses
+  - clusters
+  - datasyncs
+  - disasterbackups
+  - disasterconfigs
+  - disasterdrills
+  - disastergroups
+  - disasterinstances
+  - disasterjobs
+  - disasteroperations
+  - disasterpolicies
+  - resourcesyncs
+  - storagerepositories
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - testudo.softcdata.com
+  resources:
+  - appbackups/finalizers
+  - apprestores/finalizers
+  - backuppolicies/finalizers
+  - clusters/finalizers
+  - datasyncs/finalizers
+  - disasterbackups/finalizers
+  - disasterconfigs/finalizers
+  - disasterdrills/finalizers
+  - disasterinstances/finalizers
+  - disasterjobs/finalizers
+  - disasteroperations/finalizers
+  - disasterpolicies/finalizers
+  - resourcesyncs/finalizers
+  - storagerepositories/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - testudo.softcdata.com
+  resources:
+  - appbackups/status
+  - apprestores/status
+  - backuppolicies/status
+  - backuprestorestatisticses/status
+  - clusters/status
+  - datasyncs/status
+  - disasterbackups/status
+  - disasterconfigs/status
+  - disasterdrills/status
+  - disastergroups/status
+  - disasterinstances/status
+  - disasterjobs/status
+  - disasteroperations/status
+  - disasterpolicies/status
+  - resourcesyncs/status
+  - storagerepositories/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - velero.io
+  resources:
+  - backups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

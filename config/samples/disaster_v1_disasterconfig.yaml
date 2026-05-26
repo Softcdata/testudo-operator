@@ -1,0 +1,16 @@
+apiVersion: testudo.softcdata.com/v1
+kind: DisasterConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: dc-test
+  namespace:  disaster-system
+spec:
+  sourceCluster: cluster-1
+  targetCluster: cluster-2
+  storageRepository: "disaster"
+  dataSyncType: ""
+  resourcesSyncPolicy: 30
+  dataSyncInterval: 5
+  resourcesSyncInterval: 5

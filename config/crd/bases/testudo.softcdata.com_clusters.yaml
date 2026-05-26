@@ -1,0 +1,202 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: clusters.testudo.softcdata.com
+spec:
+  group: testudo.softcdata.com
+  names:
+    kind: Cluster
+    listKind: ClusterList
+    plural: clusters
+    shortNames:
+    - cluster
+    singular: cluster
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - description: Cluster phase
+      jsonPath: .status.status
+      name: Status
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    - description: Velero version
+      jsonPath: .status.veleroVersion
+      name: Velero
+      type: string
+    - description: Cluster version
+      jsonPath: .status.k8sVersion
+      name: Version
+      type: string
+    - description: Cluster Serever
+      jsonPath: .status.endpoint
+      name: Endpoint
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: Cluster is the Schema for the clusters API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of Cluster
+            properties:
+              endpoint:
+                type: string
+              imageSources:
+                description: ImageSources defines reusable registry aliases for this
+                  cluster.
+                items:
+                  description: |-
+                    ImageSource defines an available image registry source on a cluster.
+                    It is referenced by DisasterInstance image rewrite mappings.
+                  properties:
+                    name:
+                      description: Name is a readable alias and must be unique within
+                        one Cluster.
+                      type: string
+                    registry:
+                      description: Registry is the registry host/prefix, e.g. harbor.prod.local.
+                      type: string
+                  required:
+                  - name
+                  - registry
+                  type: object
+                type: array
+              kubeConfig:
+                format: byte
+                type: string
+              token:
+                type: string
+              veleroInstall:
+                description: VeleroInstall defines Velero install-specific image registry
+                  settings.
+                properties:
+                  imageRegistry:
+                    description: |-
+                      ImageRegistry is the registry/repository prefix used for Velero install images.
+                      Example: harbor.customer.local/disaster
+                    type: string
+                  registryCredentialSecretRef:
+                    description: RegistryCredentialSecretRef references the management-plane
+                      dockerconfigjson Secret.
+                    properties:
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                type: object
+            type: object
+          status:
+            description: status defines the observed state of Cluster
+            properties:
+              endpoint:
+                type: string
+              k8sVersion:
+                type: string
+              lastCheckTime:
+                description: LastCheckTime records the time when the stats were last
+                  collected
+                format: date-time
+                type: string
+              lastEventPhase:
+                description: LastEventPhase records the last event phase emitted,
+                  used to avoid duplicate events
+                type: string
+              message:
+                type: string
+              namespaceCount:
+                description: NamespaceCount is the number of non-system namespaces
+                  tracked by the cluster backup statistics.
+                type: integer
+              namespaceStats:
+                additionalProperties:
+                  type: integer
+                description: NamespaceStats records the backup-scope resource count
+                  per tracked namespace.
+                type: object
+              nodeCount:
+                type: integer
+              observedGeneration:
+                format: int64
+                type: integer
+              observedMetadataHash:
+                description: ObservedMetadataHash records the hash of the metadata
+                  (labels/annotations) that was last processed
+                type: string
+              readyTimestamp:
+                description: ReadyTimestamp records when the cluster became Ready,
+                  used for Duration calculation
+                format: date-time
+                type: string
+              reason:
+                type: string
+              resourceTotalCount:
+                description: ResourceTotalCount is the total number of namespace-scoped
+                  backup-scope resources across tracked namespaces.
+                type: integer
+              status:
+                type: string
+              tokenExpiration:
+                description: TokenExpiration records the expiration time of the token
+                  if it is a JWT
+                format: date-time
+                type: string
+              veleroVersion:
+                type: string
+              workloadNamespaceCount:
+                description: WorkloadNamespaceCount is the number of namespaces that
+                  contain running Deployment/StatefulSet workloads
+                type: integer
+              workloadNamespaceStats:
+                additionalProperties:
+                  type: integer
+                description: WorkloadNamespaceStats records the backup-scope resource
+                  count per tracked namespace for namespaces that contain running
+                  Deployment/StatefulSet workloads.
+                type: object
+              workloadTotalCount:
+                description: WorkloadTotalCount is the total number of namespace-scoped
+                  backup-scope resources across tracked namespaces that contain running
+                  Deployment/StatefulSet workloads.
+                type: integer
+            required:
+            - endpoint
+            - k8sVersion
+            - status
+            - veleroVersion
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

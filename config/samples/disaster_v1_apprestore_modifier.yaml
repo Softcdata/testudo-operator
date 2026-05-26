@@ -1,0 +1,18 @@
+apiVersion: testudo.softcdata.com/v1
+kind: AppRestore
+metadata:
+  name: apprestore-sample-modifier
+spec:
+  backupSource: backup-sample
+  cluster: cluster-sample
+  template:
+    backupName: backup-sample
+    includedNamespaces:
+    - default
+  # 定义资源修改规则
+  resourceModifierRules:
+  - conditions:
+      groupResource: persistentvolumeclaims
+    patches:
+    - operation: remove
+      path: "/spec/volumeName"

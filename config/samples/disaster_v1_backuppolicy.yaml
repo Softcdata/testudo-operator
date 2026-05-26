@@ -1,0 +1,11 @@
+apiVersion: testudo.softcdata.com/v1
+kind: BackupPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: backuppolicy-sample
+  namespace:  disaster-system
+
+spec:
+  # TODO(user): Add fields here

@@ -1,0 +1,23 @@
+## 1. 实施 (Implementation)
+- [ ] 1.1 重构 `DisasterInstance` 控制器
+    - 将日志统一为英文
+    - 实现 TraceID 注入 (Context & Logger)
+    - **传播**: 在 `ensureDataSync` 和 `ensureResourceSync` 中传递 TraceID
+- [ ] 1.2 重构 `DataSync` 控制器
+    - 将日志统一为英文
+    - 实现 TraceID 注入 (Context & Logger)
+    - **传播**: 
+        - 创建新 `AppBackup` 时传递 TraceID
+        - **更新** 已有 `AppBackup` 触发 Action 时，同步更新 TraceID
+        - 创建 `AppRestore` 时传递 TraceID
+- [ ] 1.3 重构 `ResourceSync` 控制器
+    - 将日志统一为英文
+    - 实现 TraceID 注入 (Context & Logger)
+    - **传播**: 
+        - 创建新 `AppBackup` 时传递 TraceID
+        - **更新** 已有 `AppBackup` 触发 Action 时，同步更新 TraceID
+        - 创建 `AppRestore` 时传递 TraceID
+        - 更新 `ConfigMap` 时传递 TraceID
+- [ ] 1.4 重构 `DisasterOperation` 控制器
+    - 将日志统一为英文
+    - 实现 TraceID 注入 (Context & Logger)

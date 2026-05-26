@@ -1,0 +1,4 @@
+- [x] 1. 修改 `disaster-operator` 的 `DisasterDrillReconciler.validateGroupDrill` 函数：实现对组内所有实例的遍历校验，确保在未配置 `NamespaceMapping` 时，演练目标集群不与任何实例的 `SecondaryCluster` 冲突。
+- [x] 2. 更新 `DisasterDrill` 状态回显：确保容灾组演练即使不传 `TargetCluster`，在 `Status` 中也能看到明确的提示或自动确定的集群。
+- [x] 3. 增强 `handleDrill` (DisasterOperation) 中的默认值逻辑：确保其 fallback 逻辑与 `DisasterDrill` 的校验逻辑保持一致。
+- [x] 4. 测试验证：编写针对容灾组演练安全拦截的集成测试。

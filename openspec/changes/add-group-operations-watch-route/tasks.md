@@ -1,0 +1,2 @@
+- [x] 1. **调整服务端单操作监听逻辑：** 深入改造 `h.watchGroupOperation`（路由 `/watch/groups/operations/:operationName`），引入组存在性探测。如果 `:operationName` 实际上对应并命中存在的一个容灾组，则使用 List+Watch 监听该组全量操作流（标签过滤）；否则，认为其是独立操作，直接下发生效操作。
+- [x] 2. **在前端实现或规范化 `watchGroupOperations` hook：** 导出一个基于同一端点的智能 hook，前端仅需传入操作标识上下文（组名或具体的单次操作名），底层将其拼接入 `/watch/groups/operations/${name}` 的长链接进行推送监听。

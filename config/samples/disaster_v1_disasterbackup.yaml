@@ -1,0 +1,12 @@
+apiVersion: testudo.softcdata.com/v1
+kind: DisasterBackup
+metadata:
+  labels:
+    app.kubernetes.io/name: disaster-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: db-test
+  namespace:  disaster-system
+
+spec:
+  disasterConfig: dc-test
+  namespace: test
