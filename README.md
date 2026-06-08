@@ -67,7 +67,7 @@ Read the full [Installation Guide](https://testudo.softcdata.com/en/docs/getting
 
 ## Architecture
 
-![Testudo architecture](static/img/diagrams/architecture.png)
+![Testudo architecture](static/img/diagrams/1.png)
 
 Testudo is organized around five layers:
 

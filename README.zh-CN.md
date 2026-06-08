@@ -67,7 +67,7 @@ http://<NodeIP>:30087
 
 ## 系统架构
 
-![Testudo 系统架构](static/img/diagrams/architecture.png)
+![Testudo 系统架构](static/img/diagrams/1.png)
 
 Testudo 整体分为五层：
 
