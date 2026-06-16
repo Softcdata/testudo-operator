@@ -99,6 +99,11 @@ type DisasterDrillSpec struct {
 	// +optional
 	RestorePolicy *RestorePolicy `json:"restorePolicy,omitempty"`
 
+	// VeleroHooks defines drill-level Velero restore hooks.
+	// Only dataRestore is used by drill data restore; dataBackup is rejected by the server API.
+	// +optional
+	VeleroHooks *DisasterVeleroHooks `json:"veleroHooks,omitempty"`
+
 	// CleanUp 触发演练资源清理
 	// +optional
 	CleanUp bool `json:"cleanup,omitempty"`

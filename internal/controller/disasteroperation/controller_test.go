@@ -3151,5 +3151,38 @@ users: []
 			Expect(updatedInst.Status.FsmState).To(Equal(disasterv1.FsmStateProtected))
 		})
 
+		It("checkAppRestoreStatus 遇到 PartiallyFailed 应返回失败错误", func() {
+			restore := &disasterv1.AppRestore{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "restore-partial",
+					Namespace: "default",
+				},
+				Status: disasterv1.AppRestoreStatus{
+					Status:  disasterv1.PhasePartiallyFailed,
+					Reason:  "RestorePartiallyFailed",
+					Message: "errors=1 warnings=0",
+				},
+			}
+
+			fakeClient = fake.NewClientBuilder().
+				WithScheme(s).
+				WithObjects(restore).
+				WithStatusSubresource(restore).
+				Build()
+
+			r = &DisasterOperationReconciler{
+				Client:   fakeClient,
+				Scheme:   s,
+				Log:      ctrl.Log.WithName("test"),
+				Recorder: recorder,
+			}
+
+			done, err := r.checkAppRestoreStatus(ctx, "default", "restore-partial")
+			Expect(done).To(BeFalse())
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("status=PartiallyFailed"))
+			Expect(err.Error()).To(ContainSubstring("errors=1 warnings=0"))
+		})
+
 	})
 })

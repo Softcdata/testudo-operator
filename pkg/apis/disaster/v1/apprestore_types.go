@@ -116,20 +116,36 @@ type RestoreAction struct {
 }
 
 // AppRestorePhase defines the phase of an AppRestore
-// +kubebuilder:validation:Enum=Pending;Restoring;InProgress;Succeeded;Failed;Cancelled;Initiating;Deleting;Unknown
+// +kubebuilder:validation:Enum=Pending;Restoring;InProgress;Succeeded;Failed;PartiallyFailed;Cancelled;Initiating;Deleting;Unknown
 // +kubebuilder:default=Pending
 type AppRestorePhase string
 
 const (
-	PhasePending    AppRestorePhase = "Pending"
-	PhaseInitiating AppRestorePhase = "Initiating" //若不更新nextphase,则不会更新status,导致第一次无法获取velero restore状态,引入init阶段，更新status后重新进入restoring阶段
-	PhaseRestoring  AppRestorePhase = "Restoring"
-	PhaseSucceeded  AppRestorePhase = "Succeeded"
-	PhaseFailed     AppRestorePhase = "Failed"
-	PhaseCancelled  AppRestorePhase = "Cancelled"
-	PhaseDeleting   AppRestorePhase = "Deleting"
-	PhaseUnknown    AppRestorePhase = "Unknown"
+	PhasePending         AppRestorePhase = "Pending"
+	PhaseInitiating      AppRestorePhase = "Initiating" //若不更新nextphase,则不会更新status,导致第一次无法获取velero restore状态,引入init阶段，更新status后重新进入restoring阶段
+	PhaseRestoring       AppRestorePhase = "Restoring"
+	PhaseSucceeded       AppRestorePhase = "Succeeded"
+	PhaseFailed          AppRestorePhase = "Failed"
+	PhasePartiallyFailed AppRestorePhase = "PartiallyFailed"
+	PhaseCancelled       AppRestorePhase = "Cancelled"
+	PhaseDeleting        AppRestorePhase = "Deleting"
+	PhaseUnknown         AppRestorePhase = "Unknown"
 )
+
+// IsTerminalAppRestorePhase reports whether the phase no longer waits for Velero progress.
+func IsTerminalAppRestorePhase(phase AppRestorePhase) bool {
+	switch phase {
+	case PhaseSucceeded, PhaseFailed, PhasePartiallyFailed, PhaseCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsFailedAppRestorePhase reports whether orchestration should treat the phase as unsuccessful.
+func IsFailedAppRestorePhase(phase AppRestorePhase) bool {
+	return phase == PhaseFailed || phase == PhasePartiallyFailed
+}
 
 // AppRestoreStatus defines the observed state of AppRestore
 type AppRestoreStatus struct {

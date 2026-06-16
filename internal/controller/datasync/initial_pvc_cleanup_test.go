@@ -36,7 +36,7 @@ func TestBuildAppRestoreSpec_InjectsPVCVolumeNameCleanupOnFirstInitializingSyncW
 		t.Fatalf("buildAppRestoreSpec returned error: %v", err)
 	}
 
-	if !hasPatch(spec.ResourceModifierRules, "persistentvolumeclaims", "remove", "/spec/volumeName") {
+	if !hasPatch(spec.ResourceModifierRules, "persistentvolumeclaims", "add", "/spec/volumeName") {
 		t.Fatalf("expected pvc volumeName cleanup patch on first initializing sync")
 	}
 }
@@ -72,7 +72,7 @@ func TestBuildAppRestoreSpec_DoesNotInjectPVCVolumeNameCleanupAfterFirstSync(t *
 		t.Fatalf("buildAppRestoreSpec returned error: %v", err)
 	}
 
-	if hasPatch(spec.ResourceModifierRules, "persistentvolumeclaims", "remove", "/spec/volumeName") {
+	if hasPatch(spec.ResourceModifierRules, "persistentvolumeclaims", "add", "/spec/volumeName") {
 		t.Fatalf("did not expect pvc volumeName cleanup patch after first sync")
 	}
 }
@@ -104,7 +104,7 @@ func TestBuildAppRestoreSpec_InjectsPVCVolumeNameCleanupAsSystemProtectWithResto
 		t.Fatalf("buildAppRestoreSpec returned error: %v", err)
 	}
 
-	if !hasPatch(spec.ResourceModifierRules, "persistentvolumeclaims", "remove", "/spec/volumeName") {
+	if !hasPatch(spec.ResourceModifierRules, "persistentvolumeclaims", "add", "/spec/volumeName") {
 		t.Fatalf("expected pvc volumeName cleanup patch in system-protect path")
 	}
 }

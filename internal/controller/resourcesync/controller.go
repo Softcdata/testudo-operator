@@ -686,7 +686,7 @@ func (r *ResourceSyncReconciler) handleRestore(ctx context.Context, log logr.Log
 
 		status := restore.Status.Status
 		phaseChanged := updateResourceSyncRestorePhaseStatus(resourceSync, phase, restoreName, status)
-		if status != disasterv1.PhaseSucceeded && status != disasterv1.PhaseFailed {
+		if status != disasterv1.PhaseSucceeded && !disasterv1.IsFailedAppRestorePhase(status) {
 			if phaseChanged {
 				if err := r.updateResourceSyncStatusWithRetry(ctx, resourceSync, func(latest *disasterv1.ResourceSync) bool {
 					return updateResourceSyncRestorePhaseStatus(latest, phase, restoreName, status)
@@ -698,9 +698,9 @@ func (r *ResourceSyncReconciler) handleRestore(ctx context.Context, log logr.Log
 		}
 
 		totalRestoreItems += lookupResourceSyncRestoreItems(restore)
-		if status == disasterv1.PhaseFailed {
+		if disasterv1.IsFailedAppRestorePhase(status) {
 			if phaseChanged {
-				log.Info("AppRestore 失败", "phase", phase, "name", restoreName)
+				log.Info("AppRestore 失败", "phase", phase, "name", restoreName, "status", status)
 			}
 			return r.finalizeRestoreResult(ctx, log, resourceSync, clusterPair, backupName, restoreName, disasterv1.ResourceSyncStateFailed, status, totalRestoreItems)
 		}

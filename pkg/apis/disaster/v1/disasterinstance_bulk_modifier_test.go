@@ -64,6 +64,56 @@ func TestRestorePolicyBulkModifierFieldsJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRestorePolicyRewriteImageBulkModifierJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	policy := RestorePolicy{
+		BulkModifierActions: []BulkModifierAction{{
+			ID:              "rewrite-primary-registry",
+			Action:          BulkModifierActionRewriteImage,
+			Enabled:         boolPtr(true),
+			ApplyTo:         []RestoreModifierApplyTarget{RestoreModifierApplyResourceSync, RestoreModifierApplyDrill},
+			DirectionPolicy: RestoreModifierDirectionPolicyAuto,
+			ImageRewrite: &DynamicImageRewriteConfig{
+				SourcePrefix:    "10.11.11.1:5000/",
+				TargetPrefix:    "registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/",
+				UnmatchedPolicy: ImageRewriteUnmatchedPolicyKeep,
+				DigestPolicy:    ImageRewriteDigestPolicyPreserve,
+			},
+		}},
+	}
+
+	payload, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatalf("expected marshal success, got %v", err)
+	}
+
+	var decoded RestorePolicy
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("expected unmarshal success, got %v", err)
+	}
+
+	if len(decoded.BulkModifierActions) != 1 {
+		t.Fatalf("expected 1 bulk action, got %d", len(decoded.BulkModifierActions))
+	}
+	action := decoded.BulkModifierActions[0]
+	if action.Action != BulkModifierActionRewriteImage {
+		t.Fatalf("expected action rewriteImage, got %s", action.Action)
+	}
+	if action.ImageRewrite == nil {
+		t.Fatalf("expected imageRewrite round-trip")
+	}
+	if action.ImageRewrite.SourcePrefix != "10.11.11.1:5000/" {
+		t.Fatalf("unexpected sourcePrefix: %s", action.ImageRewrite.SourcePrefix)
+	}
+	if action.ImageRewrite.TargetPrefix != "registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/" {
+		t.Fatalf("unexpected targetPrefix: %s", action.ImageRewrite.TargetPrefix)
+	}
+	if action.ImageRewrite.DigestPolicy != ImageRewriteDigestPolicyPreserve {
+		t.Fatalf("unexpected digestPolicy: %s", action.ImageRewrite.DigestPolicy)
+	}
+}
+
 func TestRestorePolicyDeepCopyPreservesBulkModifierFields(t *testing.T) {
 	t.Parallel()
 
@@ -73,6 +123,14 @@ func TestRestorePolicyDeepCopyPreservesBulkModifierFields(t *testing.T) {
 			Action:  BulkModifierActionRemoveKey,
 			Enabled: boolPtr(true),
 			Key:     "site-role",
+		}, {
+			ID:      "rewrite-primary-registry",
+			Action:  BulkModifierActionRewriteImage,
+			Enabled: boolPtr(true),
+			ImageRewrite: &DynamicImageRewriteConfig{
+				SourcePrefix: "10.11.11.1:5000/",
+				TargetPrefix: "registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/",
+			},
 		}},
 		ModifierRuleSnapshot: []RestoreModifierRule{{
 			ID:   "bulk-drop-key-0001",
@@ -89,11 +147,15 @@ func TestRestorePolicyDeepCopyPreservesBulkModifierFields(t *testing.T) {
 
 	cloned := original.DeepCopy()
 	cloned.BulkModifierActions[0].ID = "mutated"
+	cloned.BulkModifierActions[1].ImageRewrite.TargetPrefix = "registry-mutated.example.com/"
 	cloned.ModifierRuleSnapshot[0].VeleroRule.Patches[0].Path = "/metadata/annotations/changed"
 	cloned.ModifierRuleSnapshotHash = "sha256:after"
 
 	if original.BulkModifierActions[0].ID != "drop-key" {
 		t.Fatalf("expected bulk action ID to remain unchanged, got %s", original.BulkModifierActions[0].ID)
+	}
+	if original.BulkModifierActions[1].ImageRewrite == nil || original.BulkModifierActions[1].ImageRewrite.TargetPrefix != "registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/" {
+		t.Fatalf("expected imageRewrite targetPrefix to remain unchanged, got %#v", original.BulkModifierActions[1].ImageRewrite)
 	}
 	if original.ModifierRuleSnapshot[0].VeleroRule.Patches[0].Path != "/metadata/annotations/site-role" {
 		t.Fatalf("expected snapshot patch path to remain unchanged, got %s", original.ModifierRuleSnapshot[0].VeleroRule.Patches[0].Path)

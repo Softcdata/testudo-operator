@@ -60,7 +60,7 @@ func (r *ResourceSyncReconciler) finalizeRestoreResult(
 ) (ctrl.Result, error) {
 	msg := "资源同步成功完成"
 	if finalState == disasterv1.ResourceSyncStateFailed {
-		msg = fmt.Sprintf("资源恢复失败: %s", restoreName)
+		msg = fmt.Sprintf("资源恢复失败: %s status=%s", restoreName, restoreStatus)
 	}
 
 	now := metav1.Now()

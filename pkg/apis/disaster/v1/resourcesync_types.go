@@ -114,6 +114,17 @@ type ResourceSyncStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// SyncHistoryHookStatus summarizes Velero hook execution for a sync history entry.
+type SyncHistoryHookStatus struct {
+	// HooksAttempted is the total number of attempted hooks.
+	// +optional
+	HooksAttempted int `json:"hooksAttempted,omitempty"`
+
+	// HooksFailed is the total number of failed hooks.
+	// +optional
+	HooksFailed int `json:"hooksFailed,omitempty"`
+}
+
 // SyncHistoryRecord 定义单次同步的历史记录
 type SyncHistoryRecord struct {
 	// StartTime 同步开始时间
@@ -143,6 +154,14 @@ type SyncHistoryRecord struct {
 	// RestoreResourceCount 恢复资源数
 	// +optional
 	RestoreResourceCount int `json:"restoreResourceCount,omitempty"`
+
+	// BackupHookStatus summarizes hook execution for the related Velero Backup.
+	// +optional
+	BackupHookStatus *SyncHistoryHookStatus `json:"backupHookStatus,omitempty"`
+
+	// RestoreHookStatus summarizes hook execution for the related Velero Restore.
+	// +optional
+	RestoreHookStatus *SyncHistoryHookStatus `json:"restoreHookStatus,omitempty"`
 
 	// Status 同步结果状态 (Completed/Failed)
 	// +optional

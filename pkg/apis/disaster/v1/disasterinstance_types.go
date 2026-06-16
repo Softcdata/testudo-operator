@@ -19,6 +19,7 @@ package v1
 import (
 	"strings"
 
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -337,7 +338,36 @@ const (
 	BulkModifierActionReplaceExactValue BulkModifierActionType = "replaceExactValue"
 	// BulkModifierActionRemoveKey removes exact object/map keys in instance scope.
 	BulkModifierActionRemoveKey BulkModifierActionType = "removeKey"
+	// BulkModifierActionRewriteImage rewrites source images dynamically at restore build time.
+	BulkModifierActionRewriteImage BulkModifierActionType = "rewriteImage"
 )
+
+// ImageRewriteDigestPolicy defines behavior for digest images.
+type ImageRewriteDigestPolicy string
+
+const (
+	// ImageRewriteDigestPolicyPreserve keeps the original tag/digest suffix during rewrite.
+	ImageRewriteDigestPolicyPreserve ImageRewriteDigestPolicy = "Preserve"
+)
+
+// DynamicImageRewriteConfig defines stable runtime image rewrite intent for rewriteImage actions.
+type DynamicImageRewriteConfig struct {
+	// SourcePrefix is the image prefix expected on the baseline source side.
+	// +kubebuilder:validation:MinLength=1
+	SourcePrefix string `json:"sourcePrefix"`
+	// TargetPrefix is the image prefix expected on the baseline target side.
+	// +kubebuilder:validation:MinLength=1
+	TargetPrefix string `json:"targetPrefix"`
+	// UnmatchedPolicy controls behavior when an image does not match any rewrite action.
+	// Supported values: Keep, Fail. Default is Keep.
+	// +optional
+	// +kubebuilder:validation:Enum=Keep;Fail
+	UnmatchedPolicy ImageRewriteUnmatchedPolicy `json:"unmatchedPolicy,omitempty"`
+	// DigestPolicy controls digest image handling. Phase 1 supports Preserve.
+	// +optional
+	// +kubebuilder:validation:Enum=Preserve
+	DigestPolicy ImageRewriteDigestPolicy `json:"digestPolicy,omitempty"`
+}
 
 // BulkModifierAction defines instance-level bulk modifier input.
 type BulkModifierAction struct {
@@ -345,8 +375,8 @@ type BulkModifierAction struct {
 	// +optional
 	ID string `json:"id,omitempty"`
 	// Action controls bulk expansion behavior.
-	// Supported values: replaceExactValue, removeKey.
-	// +kubebuilder:validation:Enum=replaceExactValue;removeKey
+	// Supported values: replaceExactValue, removeKey, rewriteImage.
+	// +kubebuilder:validation:Enum=replaceExactValue;removeKey;rewriteImage
 	Action BulkModifierActionType `json:"action"`
 	// Enabled gates whether action participates in snapshot generation. Default true.
 	// +optional
@@ -367,6 +397,9 @@ type BulkModifierAction struct {
 	// Key is required when action=removeKey.
 	// +optional
 	Key string `json:"key,omitempty"`
+	// ImageRewrite is required when action=rewriteImage.
+	// +optional
+	ImageRewrite *DynamicImageRewriteConfig `json:"imageRewrite,omitempty"`
 }
 
 // RestorePolicy defines instance-level restore policy for automated restore paths.
@@ -399,6 +432,17 @@ type RestorePolicy struct {
 	// Default false in Phase 1 for smooth migration.
 	// +optional
 	UseUnifiedDirectionResolver *bool `json:"useUnifiedDirectionResolver,omitempty"`
+}
+
+// DisasterVeleroHooks defines Velero-native hooks used by disaster orchestration.
+type DisasterVeleroHooks struct {
+	// DataBackup applies only to DataSync-created AppBackup.
+	// +optional
+	DataBackup *velerov1.BackupHooks `json:"dataBackup,omitempty"`
+
+	// DataRestore applies only to DataSync-created AppRestore.
+	// +optional
+	DataRestore *velerov1.RestoreHooks `json:"dataRestore,omitempty"`
 }
 
 // DisasterInstanceSpec 定义 DisasterInstance 的期望状态
@@ -441,6 +485,10 @@ type DisasterInstanceSpec struct {
 	// DataSync/ResourceSync/Drill 在构建 AppRestore 时会应用该策略。
 	// +optional
 	RestorePolicy *RestorePolicy `json:"restorePolicy,omitempty"`
+
+	// VeleroHooks defines Velero-native hooks for DataSync data backup and restore.
+	// +optional
+	VeleroHooks *DisasterVeleroHooks `json:"veleroHooks,omitempty"`
 
 	// SkipPodReadyCheck 定义该实例执行容灾切换时是否默认跳过 Pod 就绪校验。
 	// true: 默认跳过容器就绪验证（仅校验副本配置已下发）

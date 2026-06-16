@@ -135,6 +135,38 @@ var _ = Describe("AppBackup State Machine", func() {
 			Expect(controllerutil.ContainsFinalizer(appBackup, LabelAppBackupFinalizer)).To(BeTrue())
 		})
 
+		It("should add finalizer and transition to Ready in the same pass", func() {
+			appBackup.Finalizers = nil
+			bsl := &velerov1.BackupStorageLocation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-repo-test-cluster",
+					Namespace: "velero",
+				},
+				Spec: velerov1.BackupStorageLocationSpec{
+					StorageType: velerov1.StorageType{
+						ObjectStorage: &velerov1.ObjectStorageLocation{
+							Bucket: "test-bucket",
+						},
+					},
+					Config: map[string]string{
+						"region": "us-east-1",
+						"s3Url":  "http://minio",
+					},
+				},
+				Status: velerov1.BackupStorageLocationStatus{
+					Phase: velerov1.BackupStorageLocationPhaseAvailable,
+				},
+			}
+			Expect(remoteClient.Create(ctx, bsl)).To(Succeed())
+
+			handler := &PendingHandler{}
+			phase, res, err := handler.Handle(ctx, r, appBackup)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(phase).To(Equal(PhaseReady))
+			Expect(res.Requeue).To(BeTrue())
+			Expect(controllerutil.ContainsFinalizer(appBackup, LabelAppBackupFinalizer)).To(BeTrue())
+		})
+
 		It("should transition to Failed when StorageRepository is missing", func() {
 			// Delete StorageRepo
 			Expect(fakeClient.Delete(ctx, storageRepo)).To(Succeed())

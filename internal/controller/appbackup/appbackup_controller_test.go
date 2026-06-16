@@ -173,19 +173,17 @@ var _ = Describe("AppBackup Controller", func() {
 			StatsHelper:   helper.NewStatisticsHelper(k8sClient),
 		}
 
-		By("Reconciling the resource - First pass (Add Finalizer)")
+		By("Reconciling the resource - first pass adds finalizer and applies BSL")
 		result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.Requeue || result.RequeueAfter > 0).To(BeTrue())
-
-		By("Reconciling the resource - Second pass (Apply BSL and Move to Ready)")
-		result, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
-		Expect(err).NotTo(HaveOccurred())
 
 		By("Checking status transitioned to Ready")
 		err = k8sClient.Get(ctx, typeNamespacedName, appBackup)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(appBackup.Status.Status).To(Equal(string(PhaseReady)))
+
+		Expect(result.Requeue).To(BeTrue())
 	})
 
 	It("should transition to Failed if StorageRepository is missing", func() {
@@ -216,10 +214,7 @@ var _ = Describe("AppBackup Controller", func() {
 			StatsHelper: helper.NewStatisticsHelper(k8sClient),
 		}
 
-		By("Reconciling - First Pass")
-		reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: appBackup.Name, Namespace: namespace}})
-
-		By("Reconciling - Second Pass (Should fail)")
+		By("Reconciling - should add finalizer and fail storage validation in one pass")
 		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: appBackup.Name, Namespace: namespace}})
 		Expect(err).NotTo(HaveOccurred())
 

@@ -143,6 +143,11 @@ type DrillConfig struct {
 	// 仅 drill/drill-cleanup 相关编排使用，未提供时继承实例 restorePolicy。
 	// +optional
 	RestorePolicy *RestorePolicy `json:"restorePolicy,omitempty"`
+
+	// VeleroHooks carries drill-level Velero hook overrides into operation execution.
+	// Only dataRestore is used by drill data restore.
+	// +optional
+	VeleroHooks *DisasterVeleroHooks `json:"veleroHooks,omitempty"`
 }
 
 // OperationDirective 运行时指令

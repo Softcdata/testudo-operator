@@ -185,3 +185,67 @@ func TestRestoringHandler_FailsWhenPodVolumeRestoreFailed(t *testing.T) {
 		t.Fatalf("expected message to include failed PVR name, got %q", appRestore.Status.Message)
 	}
 }
+
+func TestRestoringHandler_MapsVeleroPartiallyFailedToAppRestorePartiallyFailed(t *testing.T) {
+	scheme := newPVRTestScheme(t)
+	mgmtClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	mockTargetClient := &controller.MockClient{
+		Client: mgmtClient,
+	}
+	mockFactory := &controller.MockClientFactory{
+		MockClient: mockTargetClient,
+	}
+
+	reconciler := &AppRestoreReconciler{
+		Client:        mgmtClient,
+		Scheme:        scheme,
+		Recorder:      record.NewFakeRecorder(20),
+		ClientFactory: mockFactory,
+	}
+
+	appRestore := &disasterv1.AppRestore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "apprestore-partial",
+			Namespace: "disaster-system",
+		},
+		Spec: disasterv1.AppRestoreSpec{
+			Cluster: "cluster-a",
+		},
+		Status: disasterv1.AppRestoreStatus{
+			Status: disasterv1.PhaseRestoring,
+		},
+	}
+
+	restoreName := reconciler.GenRestoreName(appRestore)
+	mockTargetClient.MockGet = func(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+		if restore, ok := obj.(*velerov1.Restore); ok {
+			restore.Name = restoreName
+			restore.Namespace = controller.VeleroNamespace
+			restore.CreationTimestamp = metav1.NewTime(time.Now().Add(-2 * time.Minute))
+			restore.Status.Phase = velerov1.RestorePhasePartiallyFailed
+			restore.Status.Errors = 1
+			restore.Status.Warnings = 2
+			return nil
+		}
+		return mgmtClient.Get(ctx, key, obj, opts...)
+	}
+
+	handler := &RestoringHandler{}
+	nextPhase, _, err := handler.Handle(context.Background(), reconciler, appRestore)
+	if err != nil {
+		t.Fatalf("RestoringHandler.Handle returned error: %v", err)
+	}
+	if nextPhase != disasterv1.PhasePartiallyFailed {
+		t.Fatalf("expected next phase PartiallyFailed, got %q", nextPhase)
+	}
+	if appRestore.Status.RestoreStatus.Phase != velerov1.RestorePhasePartiallyFailed {
+		t.Fatalf("expected nested restore phase PartiallyFailed, got %q", appRestore.Status.RestoreStatus.Phase)
+	}
+	if appRestore.Status.Reason != "RestorePartiallyFailed" {
+		t.Fatalf("expected reason RestorePartiallyFailed, got %q", appRestore.Status.Reason)
+	}
+	if !strings.Contains(appRestore.Status.Message, "errors=1 warnings=2") {
+		t.Fatalf("expected error counts in message, got %q", appRestore.Status.Message)
+	}
+}

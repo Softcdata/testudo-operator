@@ -111,6 +111,7 @@ spec:
                 - InProgress
                 - Succeeded
                 - Failed
+                - PartiallyFailed
                 - Cancelled
                 - Initiating
                 - Deleting
@@ -178,6 +179,18 @@ spec:
                 items:
                   description: SyncHistoryRecord 定义单次同步的历史记录
                   properties:
+                    backupHookStatus:
+                      description: BackupHookStatus summarizes hook execution for
+                        the related Velero Backup.
+                      properties:
+                        hooksAttempted:
+                          description: HooksAttempted is the total number of attempted
+                            hooks.
+                          type: integer
+                        hooksFailed:
+                          description: HooksFailed is the total number of failed hooks.
+                          type: integer
+                      type: object
                     backupName:
                       description: BackupName 关联的 AppBackup 名称
                       type: string
@@ -191,6 +204,18 @@ spec:
                     duration:
                       description: Duration 同步耗时
                       type: string
+                    restoreHookStatus:
+                      description: RestoreHookStatus summarizes hook execution for
+                        the related Velero Restore.
+                      properties:
+                        hooksAttempted:
+                          description: HooksAttempted is the total number of attempted
+                            hooks.
+                          type: integer
+                        hooksFailed:
+                          description: HooksFailed is the total number of failed hooks.
+                          type: integer
+                      type: object
                     restoreName:
                       description: RestoreName 关联的 AppRestore 名称 (如果有)
                       type: string
@@ -236,6 +261,7 @@ spec:
                 - InProgress
                 - Succeeded
                 - Failed
+                - PartiallyFailed
                 - Cancelled
                 - Initiating
                 - Deleting

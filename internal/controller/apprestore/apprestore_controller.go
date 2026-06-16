@@ -133,6 +133,8 @@ func (r *AppRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		handler = &SucceededHandler{}
 	case disasterv1.PhaseFailed:
 		handler = &FailedHandler{}
+	case disasterv1.PhasePartiallyFailed:
+		handler = &PartiallyFailedHandler{}
 	case disasterv1.PhaseCancelled:
 		handler = &CancelledHandler{}
 	case disasterv1.PhaseDeleting:
@@ -155,13 +157,13 @@ func (r *AppRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			helper.SetStatusError(&appRestore.Status, appRestore.Status.Reason, handlerErr.Error())
 		}
 	} else {
-		// Preserve handler-assigned failure details when entering Failed phase.
-		// Clear stale errors when current/next phase is not Failed.
+		// Preserve handler-assigned failure details when entering failed terminal phases.
+		// Clear stale errors when current/next phase is not failed.
 		resolvedPhase := phase
 		if nextPhase != "" {
 			resolvedPhase = nextPhase
 		}
-		if resolvedPhase != disasterv1.PhaseFailed {
+		if !disasterv1.IsFailedAppRestorePhase(resolvedPhase) {
 			helper.ClearStatusError(&appRestore.Status)
 		}
 	}
@@ -776,7 +778,7 @@ func (r *AppRestoreReconciler) syncStatistics(ctx context.Context, appRestore *d
 	switch appRestore.Status.Status {
 	case disasterv1.PhaseSucceeded:
 		snapshot.Statistics.Completed = 1
-	case disasterv1.PhaseFailed:
+	case disasterv1.PhaseFailed, disasterv1.PhasePartiallyFailed:
 		snapshot.Statistics.Failed = 1
 	case disasterv1.PhaseCancelled:
 		snapshot.Statistics.Canceled = 1

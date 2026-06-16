@@ -138,11 +138,14 @@ func TestMakePVCVolumeNameCleanupRule(t *testing.T) {
 	if len(rule.Patches) != 1 {
 		t.Fatalf("expected exactly 1 patch, got %d", len(rule.Patches))
 	}
-	if rule.Patches[0].Operation != "remove" {
-		t.Fatalf("expected remove operation, got %s", rule.Patches[0].Operation)
+	if rule.Patches[0].Operation != "add" {
+		t.Fatalf("expected add operation, got %s", rule.Patches[0].Operation)
 	}
 	if rule.Patches[0].Path != "/spec/volumeName" {
 		t.Fatalf("expected /spec/volumeName path, got %s", rule.Patches[0].Path)
+	}
+	if rule.Patches[0].Value != "" {
+		t.Fatalf("expected empty volumeName value, got %q", rule.Patches[0].Value)
 	}
 
 	// Ensure input slice mutation does not affect built rule.

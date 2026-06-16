@@ -207,7 +207,7 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 		appRestore.Status.Reason = errorCode
 		appRestore.Status.Message = failMsg
 		helper.ReportTaskFinishedWithClient(ctx, r.Client, r.Scheme, appRestore, taskName, appRestore.Spec.Cluster, helper.TaskStatusFailed, restore.Status.StartTimestamp, restore.Status.CompletionTimestamp, user, triggeredBy, failMsg, errorCode)
-		return disasterv1.PhaseSucceeded, ctrl.Result{}, nil
+		return disasterv1.PhasePartiallyFailed, ctrl.Result{}, nil
 	case velerov1.RestorePhaseInProgress:
 		// Check global timeout
 		timeout := resolveRestoreInProgressTimeout(appRestore, cfg)

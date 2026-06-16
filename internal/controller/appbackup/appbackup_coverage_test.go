@@ -945,12 +945,12 @@ var _ = Describe("AppBackup Coverage Expansion", func() {
 			handler = &PendingHandler{}
 		})
 
-		It("should add Finalizer if missing", func() {
+		It("should continue validation after adding Finalizer", func() {
 			appBackup.Finalizers = nil
 			phase, res, err := handler.Handle(ctx, reconciler, appBackup)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.Requeue).To(BeTrue())
-			Expect(phase).To(Equal(PhasePending))
+			Expect(phase).To(Equal(PhaseReady))
 			Expect(appBackup.Finalizers).To(ContainElement(LabelAppBackupFinalizer))
 		})
 

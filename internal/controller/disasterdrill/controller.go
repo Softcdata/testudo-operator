@@ -428,6 +428,7 @@ func (r *DisasterDrillReconciler) handleReady(ctx context.Context, log logr.Logg
 					NamespaceMapping: drill.Spec.NamespaceMapping,
 					SkipValidation:   drill.Spec.SkipValidation,
 					RestorePolicy:    drill.Spec.RestorePolicy,
+					VeleroHooks:      drill.Spec.VeleroHooks,
 				},
 				Directive: &disasterv1.OperationDirective{
 					Confirmed: true,

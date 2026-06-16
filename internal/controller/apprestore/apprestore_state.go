@@ -264,6 +264,36 @@ func (h *FailedHandler) Handle(ctx context.Context, r *AppRestoreReconciler, app
 	return disasterv1.PhaseFailed, ctrl.Result{}, nil
 }
 
+// PartiallyFailedHandler handles the PartiallyFailed phase of AppRestore.
+type PartiallyFailedHandler struct{}
+
+func (h *PartiallyFailedHandler) Handle(ctx context.Context, r *AppRestoreReconciler, appRestore *disasterv1.AppRestore) (disasterv1.AppRestorePhase, ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+	cli, err := r.ClientFactory.GetKubeClient(ctx, r.Client, r.Scheme, appRestore.Spec.Cluster)
+	if err != nil {
+		logger.Error(err, "error creating kube client")
+		r.Recorder.Event(appRestore, corev1.EventTypeWarning, "CreateKubeClientFailed", err.Error())
+		return disasterv1.PhasePending, ctrl.Result{}, err
+	}
+
+	restore, err := r.getVeleroRestore(ctx, cli, appRestore)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			logger.Error(err, "error getting Velero Restore")
+			r.Recorder.Event(appRestore, corev1.EventTypeWarning, "GetVeleroRestoreFailed", err.Error())
+			return disasterv1.PhasePartiallyFailed, ctrl.Result{}, err
+		}
+		restore = &velerov1.Restore{}
+	}
+
+	if phase, res, err := r.processAction(ctx, cli, appRestore, restore); err != nil {
+		return phase, res, err
+	} else if phase != "" {
+		return phase, res, nil
+	}
+	return disasterv1.PhasePartiallyFailed, ctrl.Result{}, nil
+}
+
 // isVeleroRestoreRunning checks if the Velero Restore is in a running (non-terminal) state
 func isVeleroRestoreRunning(phase velerov1.RestorePhase) bool {
 	switch phase {

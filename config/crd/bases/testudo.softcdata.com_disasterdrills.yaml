@@ -96,10 +96,11 @@ spec:
                         action:
                           description: |-
                             Action controls bulk expansion behavior.
-                            Supported values: replaceExactValue, removeKey.
+                            Supported values: replaceExactValue, removeKey, rewriteImage.
                           enum:
                           - replaceExactValue
                           - removeKey
+                          - rewriteImage
                           type: string
                         applyTo:
                           description: ApplyTo scopes action to resourceSync/drill
@@ -125,6 +126,37 @@ spec:
                           description: ID is optional user-facing action id for diagnostics
                             and deterministic rule IDs.
                           type: string
+                        imageRewrite:
+                          description: ImageRewrite is required when action=rewriteImage.
+                          properties:
+                            digestPolicy:
+                              description: DigestPolicy controls digest image handling.
+                                Phase 1 supports Preserve.
+                              enum:
+                              - Preserve
+                              type: string
+                            sourcePrefix:
+                              description: SourcePrefix is the image prefix expected
+                                on the baseline source side.
+                              minLength: 1
+                              type: string
+                            targetPrefix:
+                              description: TargetPrefix is the image prefix expected
+                                on the baseline target side.
+                              minLength: 1
+                              type: string
+                            unmatchedPolicy:
+                              description: |-
+                                UnmatchedPolicy controls behavior when an image does not match any rewrite action.
+                                Supported values: Keep, Fail. Default is Keep.
+                              enum:
+                              - Keep
+                              - Fail
+                              type: string
+                          required:
+                          - sourcePrefix
+                          - targetPrefix
+                          type: object
                         key:
                           description: Key is required when action=removeKey.
                           type: string
@@ -736,6 +768,361 @@ spec:
               targetCluster:
                 description: TargetCluster 演练目标集群 (可选，不指定则使用 Instance 的 secondaryCluster)
                 type: string
+              veleroHooks:
+                description: |-
+                  VeleroHooks defines drill-level Velero restore hooks.
+                  Only dataRestore is used by drill data restore; dataBackup is rejected by the server API.
+                properties:
+                  dataBackup:
+                    description: DataBackup applies only to DataSync-created AppBackup.
+                    properties:
+                      resources:
+                        description: Resources are hooks that should be executed when
+                          backing up individual instances of a resource.
+                        items:
+                          description: |-
+                            BackupResourceHookSpec defines one or more BackupResourceHooks that should be executed based on
+                            the rules defined for namespaces, resources, and label selector.
+                          properties:
+                            excludedNamespaces:
+                              description: ExcludedNamespaces specifies the namespaces
+                                to which this hook spec does not apply.
+                              items:
+                                type: string
+                              nullable: true
+                              type: array
+                            excludedResources:
+                              description: ExcludedResources specifies the resources
+                                to which this hook spec does not apply.
+                              items:
+                                type: string
+                              nullable: true
+                              type: array
+                            includedNamespaces:
+                              description: |-
+                                IncludedNamespaces specifies the namespaces to which this hook spec applies. If empty, it applies
+                                to all namespaces.
+                              items:
+                                type: string
+                              nullable: true
+                              type: array
+                            includedResources:
+                              description: |-
+                                IncludedResources specifies the resources to which this hook spec applies. If empty, it applies
+                                to all resources.
+                              items:
+                                type: string
+                              nullable: true
+                              type: array
+                            labelSelector:
+                              description: LabelSelector, if specified, filters the
+                                resources to which this hook spec applies.
+                              nullable: true
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: |-
+                                      A label selector requirement is a selector that contains values, a key, and an operator that
+                                      relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          operator represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          values is an array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. This array is replaced during a strategic
+                                          merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: |-
+                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            name:
+                              description: Name is the name of this hook.
+                              type: string
+                            post:
+                              description: |-
+                                PostHooks is a list of BackupResourceHooks to execute after storing the item in the backup.
+                                These are executed after all "additional items" from item actions are processed.
+                              items:
+                                description: BackupResourceHook defines a hook for
+                                  a resource.
+                                properties:
+                                  exec:
+                                    description: Exec defines an exec hook.
+                                    properties:
+                                      command:
+                                        description: Command is the command and arguments
+                                          to execute.
+                                        items:
+                                          type: string
+                                        minItems: 1
+                                        type: array
+                                      container:
+                                        description: |-
+                                          Container is the container in the pod where the command should be executed. If not specified,
+                                          the pod's first container is used.
+                                        type: string
+                                      onError:
+                                        description: OnError specifies how Velero
+                                          should behave if it encounters an error
+                                          executing this hook.
+                                        enum:
+                                        - Continue
+                                        - Fail
+                                        type: string
+                                      timeout:
+                                        description: |-
+                                          Timeout defines the maximum amount of time Velero should wait for the hook to complete before
+                                          considering the execution a failure.
+                                        type: string
+                                    required:
+                                    - command
+                                    type: object
+                                required:
+                                - exec
+                                type: object
+                              type: array
+                            pre:
+                              description: |-
+                                PreHooks is a list of BackupResourceHooks to execute prior to storing the item in the backup.
+                                These are executed before any "additional items" from item actions are processed.
+                              items:
+                                description: BackupResourceHook defines a hook for
+                                  a resource.
+                                properties:
+                                  exec:
+                                    description: Exec defines an exec hook.
+                                    properties:
+                                      command:
+                                        description: Command is the command and arguments
+                                          to execute.
+                                        items:
+                                          type: string
+                                        minItems: 1
+                                        type: array
+                                      container:
+                                        description: |-
+                                          Container is the container in the pod where the command should be executed. If not specified,
+                                          the pod's first container is used.
+                                        type: string
+                                      onError:
+                                        description: OnError specifies how Velero
+                                          should behave if it encounters an error
+                                          executing this hook.
+                                        enum:
+                                        - Continue
+                                        - Fail
+                                        type: string
+                                      timeout:
+                                        description: |-
+                                          Timeout defines the maximum amount of time Velero should wait for the hook to complete before
+                                          considering the execution a failure.
+                                        type: string
+                                    required:
+                                    - command
+                                    type: object
+                                required:
+                                - exec
+                                type: object
+                              type: array
+                          required:
+                          - name
+                          type: object
+                        nullable: true
+                        type: array
+                    type: object
+                  dataRestore:
+                    description: DataRestore applies only to DataSync-created AppRestore.
+                    properties:
+                      resources:
+                        items:
+                          description: |-
+                            RestoreResourceHookSpec defines one or more RestoreResrouceHooks that should be executed based on
+                            the rules defined for namespaces, resources, and label selector.
+                          properties:
+                            excludedNamespaces:
+                              description: ExcludedNamespaces specifies the namespaces
+                                to which this hook spec does not apply.
+                              items:
+                                type: string
+                              nullable: true
+                              type: array
+                            excludedResources:
+                              description: ExcludedResources specifies the resources
+                                to which this hook spec does not apply.
+                              items:
+                                type: string
+                              nullable: true
+                              type: array
+                            includedNamespaces:
+                              description: |-
+                                IncludedNamespaces specifies the namespaces to which this hook spec applies. If empty, it applies
+                                to all namespaces.
+                              items:
+                                type: string
+                              nullable: true
+                              type: array
+                            includedResources:
+                              description: |-
+                                IncludedResources specifies the resources to which this hook spec applies. If empty, it applies
+                                to all resources.
+                              items:
+                                type: string
+                              nullable: true
+                              type: array
+                            labelSelector:
+                              description: LabelSelector, if specified, filters the
+                                resources to which this hook spec applies.
+                              nullable: true
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: |-
+                                      A label selector requirement is a selector that contains values, a key, and an operator that
+                                      relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: |-
+                                          operator represents a key's relationship to a set of values.
+                                          Valid operators are In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: |-
+                                          values is an array of string values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                          the values array must be empty. This array is replaced during a strategic
+                                          merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: |-
+                                    matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                    operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            name:
+                              description: Name is the name of this hook.
+                              type: string
+                            postHooks:
+                              description: PostHooks is a list of RestoreResourceHooks
+                                to execute during and after restoring a resource.
+                              items:
+                                description: RestoreResourceHook defines a restore
+                                  hook for a resource.
+                                properties:
+                                  exec:
+                                    description: Exec defines an exec restore hook.
+                                    properties:
+                                      command:
+                                        description: Command is the command and arguments
+                                          to execute from within a container after
+                                          a pod has been restored.
+                                        items:
+                                          type: string
+                                        minItems: 1
+                                        type: array
+                                      container:
+                                        description: |-
+                                          Container is the container in the pod where the command should be executed. If not specified,
+                                          the pod's first container is used.
+                                        type: string
+                                      execTimeout:
+                                        description: |-
+                                          ExecTimeout defines the maximum amount of time Velero should wait for the hook to complete before
+                                          considering the execution a failure.
+                                        type: string
+                                      onError:
+                                        description: OnError specifies how Velero
+                                          should behave if it encounters an error
+                                          executing this hook.
+                                        enum:
+                                        - Continue
+                                        - Fail
+                                        type: string
+                                      waitForReady:
+                                        description: WaitForReady ensures command
+                                          will be launched when container is Ready
+                                          instead of Running.
+                                        nullable: true
+                                        type: boolean
+                                      waitTimeout:
+                                        description: |-
+                                          WaitTimeout defines the maximum amount of time Velero should wait for the container to be Ready
+                                          before attempting to run the command.
+                                        type: string
+                                    required:
+                                    - command
+                                    type: object
+                                  init:
+                                    description: Init defines an init restore hook.
+                                    properties:
+                                      initContainers:
+                                        description: InitContainers is list of init
+                                          containers to be added to a pod during its
+                                          restore.
+                                        items:
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
+                                        type: array
+                                        x-kubernetes-preserve-unknown-fields: true
+                                      timeout:
+                                        description: Timeout defines the maximum amount
+                                          of time Velero should wait for the initContainers
+                                          to complete.
+                                        type: string
+                                    type: object
+                                type: object
+                              type: array
+                          required:
+                          - name
+                          type: object
+                        type: array
+                    type: object
+                type: object
               waitUntilReady:
                 description: WaitUntilReady 是否等待 Pod 就绪
                 type: boolean

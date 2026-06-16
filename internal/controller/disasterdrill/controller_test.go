@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -360,6 +361,11 @@ var _ = Describe("DisasterDrill Controller", func() {
 							},
 						}},
 					},
+					VeleroHooks: &disasterv1.DisasterVeleroHooks{
+						DataRestore: &velerov1.RestoreHooks{
+							Resources: []velerov1.RestoreResourceHookSpec{{Name: "drill-restore-hook"}},
+						},
+					},
 				},
 				Status: disasterv1.DisasterDrillStatus{
 					State:         disasterv1.DrillStateReady,
@@ -390,6 +396,56 @@ var _ = Describe("DisasterDrill Controller", func() {
 			Expect(ops.Items[0].Spec.DrillConfig.RestorePolicy).NotTo(BeNil())
 			Expect(ops.Items[0].Spec.DrillConfig.RestorePolicy.ModifierRules).To(HaveLen(1))
 			Expect(ops.Items[0].Spec.DrillConfig.RestorePolicy.ModifierRules[0].ID).To(Equal("drill-only-rule"))
+			Expect(ops.Items[0].Spec.DrillConfig.VeleroHooks).NotTo(BeNil())
+			Expect(ops.Items[0].Spec.DrillConfig.VeleroHooks.DataRestore).NotTo(BeNil())
+			Expect(ops.Items[0].Spec.DrillConfig.VeleroHooks.DataRestore.Resources).To(HaveLen(1))
+			Expect(ops.Items[0].Spec.DrillConfig.VeleroHooks.DataRestore.Resources[0].Name).To(Equal("drill-restore-hook"))
+		})
+
+		It("Ready+Confirmed 的演练应将空 veleroHooks 作为清空覆盖透传到 DisasterOperation", func() {
+			instance := createTestInstance("inst-1", "default", "cluster-A", "cluster-B")
+			drill := &disasterv1.DisasterDrill{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "empty-hooks-drill",
+					Namespace: "default",
+					Finalizers: []string{
+						drillFinalizer,
+					},
+				},
+				Spec: disasterv1.DisasterDrillSpec{
+					InstanceName: "inst-1",
+					Confirmed:    true,
+					VeleroHooks:  &disasterv1.DisasterVeleroHooks{},
+				},
+				Status: disasterv1.DisasterDrillStatus{
+					State:         disasterv1.DrillStateReady,
+					TargetCluster: "cluster-B",
+				},
+			}
+
+			fakeClient = fake.NewClientBuilder().
+				WithScheme(s).
+				WithObjects(instance, drill).
+				WithStatusSubresource(drill).
+				Build()
+
+			r = &DisasterDrillReconciler{
+				Client:   fakeClient,
+				Scheme:   s,
+				Log:      ctrl.Log.WithName("test"),
+				Recorder: recorder,
+			}
+
+			_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "empty-hooks-drill", Namespace: "default"}})
+			Expect(err).NotTo(HaveOccurred())
+
+			ops := &disasterv1.DisasterOperationList{}
+			Expect(fakeClient.List(ctx, ops, client.InNamespace("default"))).To(Succeed())
+			Expect(ops.Items).To(HaveLen(1))
+			Expect(ops.Items[0].Spec.DrillConfig).NotTo(BeNil())
+			Expect(ops.Items[0].Spec.DrillConfig.VeleroHooks).NotTo(BeNil())
+			Expect(ops.Items[0].Spec.DrillConfig.VeleroHooks.DataBackup).To(BeNil())
+			Expect(ops.Items[0].Spec.DrillConfig.VeleroHooks.DataRestore).To(BeNil())
 		})
 	})
 })

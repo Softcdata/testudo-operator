@@ -36,8 +36,39 @@ func effectiveBulkModifierActions(policy *disasterv1.RestorePolicy) []disasterv1
 	return out
 }
 
+func bulkModifierActionRequiresSnapshot(action disasterv1.BulkModifierAction) bool {
+	return action.Action != disasterv1.BulkModifierActionRewriteImage
+}
+
+func effectiveSnapshotBulkModifierActions(policy *disasterv1.RestorePolicy) []disasterv1.BulkModifierAction {
+	actions := effectiveBulkModifierActions(policy)
+	if len(actions) == 0 {
+		return nil
+	}
+	out := make([]disasterv1.BulkModifierAction, 0, len(actions))
+	for idx := range actions {
+		action := actions[idx]
+		if !bulkModifierActionRequiresSnapshot(action) {
+			continue
+		}
+		copied := action.DeepCopy()
+		if copied == nil {
+			continue
+		}
+		out = append(out, *copied)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func hasEffectiveBulkModifierActions(policy *disasterv1.RestorePolicy) bool {
 	return len(effectiveBulkModifierActions(policy)) > 0
+}
+
+func hasSnapshotBulkModifierActions(policy *disasterv1.RestorePolicy) bool {
+	return len(effectiveSnapshotBulkModifierActions(policy)) > 0
 }
 
 // HasEffectiveBulkModifierActions reports whether policy contains at least one enabled bulk action.
@@ -49,7 +80,7 @@ func effectiveModifierRuleInput(policy *disasterv1.RestorePolicy) ([]disasterv1.
 	if policy == nil {
 		return nil, false, nil
 	}
-	if !hasEffectiveBulkModifierActions(policy) {
+	if !hasSnapshotBulkModifierActions(policy) {
 		return cloneRestoreModifierRules(policy.ModifierRules), false, nil
 	}
 	if len(policy.ModifierRuleSnapshot) == 0 {

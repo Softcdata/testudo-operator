@@ -57,9 +57,6 @@ func (h *PendingHandler) Handle(ctx context.Context, r *AppBackupReconciler, app
 		// 由于资源创建是瞬时完成的，我们直接发射 Started + Finished
 		helper.ReportTaskStartedWithClient(ctx, r.Client, r.Scheme, appBackup, taskName, appBackup.Spec.Cluster, user, traceID, "开始创建应用备份")
 		helper.ReportTaskFinishedWithClient(ctx, r.Client, r.Scheme, appBackup, taskName, appBackup.Spec.Cluster, helper.TaskStatusSuccess, &now, &now, user, traceID, "应用备份创建完成")
-
-		// Continue to next steps instead of returning, to speed up the process
-		return PhasePending, ctrl.Result{Requeue: true}, nil
 	}
 
 	// 2. Validate Cluster

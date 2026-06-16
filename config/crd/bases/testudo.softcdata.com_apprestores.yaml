@@ -757,6 +757,7 @@ spec:
                 - InProgress
                 - Succeeded
                 - Failed
+                - PartiallyFailed
                 - Cancelled
                 - Initiating
                 - Deleting

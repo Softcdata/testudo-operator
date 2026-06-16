@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -2954,7 +2955,7 @@ func (r *DisasterOperationReconciler) executeDrillRestoreResource(ctx context.Co
 
 	// 1. 尝试从 Status 获取
 	if operation.Status.ResourceRestoreName != "" {
-		finished, err := r.checkAppRestoreStatus(ctx, log, instance.Namespace, operation.Status.ResourceRestoreName)
+		finished, err := r.checkAppRestoreStatus(ctx, instance.Namespace, operation.Status.ResourceRestoreName)
 		if err != nil {
 			return false, err
 		}
@@ -3015,6 +3016,29 @@ func (r *DisasterOperationReconciler) executeDrillRestoreResource(ctx context.Co
 		return false, fmt.Errorf("build drill image rewrite rules: %w", err)
 	}
 
+	effectiveInstance := instance
+	if instance != nil {
+		effectiveInstance = instance.DeepCopy()
+		effectiveInstance.Spec.RestorePolicy = restore.EffectiveRestorePolicy(instance, drillRestorePolicy)
+	}
+	runtimeImageRewriteRules := []disasterv1.RestoreModifierRule(nil)
+	if effectiveInstance != nil && restore.HasDynamicImageRewriteActions(effectiveInstance.Spec.RestorePolicy, disasterv1.RestoreModifierApplyDrill) {
+		sourceClient, err := r.getClusterClient(ctx, sourceCluster)
+		if err != nil {
+			return false, fmt.Errorf("build drill source cluster client for dynamic image rewrite: %w", err)
+		}
+		runtimeImageRewriteRules, _, err = (&restore.DynamicImageRewriteCompiler{}).CompileDynamicImageRewriteRules(
+			ctx,
+			effectiveInstance,
+			sourceClient,
+			disasterv1.RestoreModifierApplyDrill,
+			restore.WithDynamicImageRewriteBaseline(config.Spec.SourceCluster, config.Spec.TargetCluster),
+		)
+		if err != nil {
+			return false, fmt.Errorf("compile drill dynamic image rewrite rules: %w", err)
+		}
+	}
+
 	// 使用共享构建器
 	restoreSpec := restore.BuildAppRestoreSpec(restore.BuilderConfig{
 		RestoreType:                restore.RestoreTypeResource,
@@ -3045,6 +3069,7 @@ func (r *DisasterOperationReconciler) executeDrillRestoreResource(ctx context.Co
 		restore.WithBaselineClusters(config.Spec.SourceCluster, config.Spec.TargetCluster),
 		restore.WithApplyTarget(disasterv1.RestoreModifierApplyDrill),
 		restore.WithRestorePolicyOverride(drillRestorePolicy),
+		restore.WithRuntimeModifierRules(runtimeImageRewriteRules),
 	)
 	if err != nil {
 		return false, fmt.Errorf("apply drill restore policy: %w", err)
@@ -3083,6 +3108,16 @@ func (r *DisasterOperationReconciler) executeDrillRestoreResource(ctx context.Co
 	return false, nil
 }
 
+func resolveDrillDataRestoreHooks(instance *disasterv1.DisasterInstance, drillConfig *disasterv1.DrillConfig) *velerov1.RestoreHooks {
+	if drillConfig != nil && drillConfig.VeleroHooks != nil {
+		return drillConfig.VeleroHooks.DataRestore
+	}
+	if instance == nil || instance.Spec.VeleroHooks == nil {
+		return nil
+	}
+	return instance.Spec.VeleroHooks.DataRestore
+}
+
 // executeDrillRestoreData 执行数据恢复步骤 (从 DataSync 备份恢复 PVC 数据)
 func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Context, log logr.Logger, instance *disasterv1.DisasterInstance, operation *disasterv1.DisasterOperation, targetCluster string) (bool, error) {
 	log.Info("执行 Drill 数据恢复步骤", "targetCluster", targetCluster)
@@ -3094,6 +3129,7 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 		}
 		return drillConfig.RestorePolicy
 	}()
+	drillDataRestoreHooks := resolveDrillDataRestoreHooks(instance, drillConfig)
 
 	// 0. Fetch DisasterConfig
 	config := &disasterv1.DisasterConfig{}
@@ -3103,7 +3139,7 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 
 	// 1. 尝试从 Status 获取
 	if operation.Status.DataRestoreName != "" {
-		finished, err := r.checkAppRestoreStatus(ctx, log, instance.Namespace, operation.Status.DataRestoreName)
+		finished, err := r.checkAppRestoreStatus(ctx, instance.Namespace, operation.Status.DataRestoreName)
 		if err != nil {
 			return false, err
 		}
@@ -3165,6 +3201,7 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 		IncludedNamespaces: instance.Spec.Namespaces,
 		NamespaceMapping:   namespaceMapping,
 		IsForDrill:         true,
+		DataRestoreHooks:   drillDataRestoreHooks,
 	})
 	cleanupRule, needsCleanup := buildDrillPVCVolumeNameCleanupRule(instance, namespaceMapping)
 	if needsCleanup && instance.Spec.RestorePolicy == nil {
@@ -3292,7 +3329,7 @@ func drillPVCVolumeCleanupNamespaces(sourceNamespaces []string, namespaceMapping
 }
 
 // checkAppRestoreStatus 检查 AppRestore 状态
-func (r *DisasterOperationReconciler) checkAppRestoreStatus(ctx context.Context, log logr.Logger, namespace, name string) (bool, error) {
+func (r *DisasterOperationReconciler) checkAppRestoreStatus(ctx context.Context, namespace, name string) (bool, error) {
 	existingRestore := &disasterv1.AppRestore{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, existingRestore); err != nil {
 		return false, err
@@ -3301,8 +3338,8 @@ func (r *DisasterOperationReconciler) checkAppRestoreStatus(ctx context.Context,
 	if existingRestore.Status.Status == disasterv1.PhaseSucceeded {
 		return true, nil
 	}
-	if existingRestore.Status.Status == disasterv1.PhaseFailed {
-		return false, fmt.Errorf("AppRestore %s 失败: %s", name, existingRestore.Status.Message)
+	if disasterv1.IsFailedAppRestorePhase(existingRestore.Status.Status) {
+		return false, fmt.Errorf("AppRestore %s 失败: status=%s message=%s", name, existingRestore.Status.Status, existingRestore.Status.Message)
 	}
 
 	// 仍在进行中

@@ -160,3 +160,111 @@ func TestHandleRestore_SetLastSyncTimeOnBuildRestoreSpecFailed(t *testing.T) {
 		t.Fatalf("expected backup resource count 7, got %d", record.BackupResourceCount)
 	}
 }
+
+func TestHandleRestore_TreatsPartiallyFailedAppRestoreAsFailed(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := disasterv1.AddToScheme(s); err != nil {
+		t.Fatalf("add disaster scheme: %v", err)
+	}
+
+	backupName := "backup-partial"
+	restoreName := resourceSyncRestoreName("rs-test", backupName, resourceSyncRestorePhaseLegacy)
+	start := metav1.NewTime(time.Now().Add(-3 * time.Minute))
+
+	rs := &disasterv1.ResourceSync{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "rs-test",
+			Namespace: "default",
+		},
+		Status: disasterv1.ResourceSyncStatus{
+			State: disasterv1.ResourceSyncStateInProgress,
+		},
+	}
+	backup := &disasterv1.AppBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "rs-rs-test",
+			Namespace: "default",
+		},
+		Status: disasterv1.AppBackupStatus{
+			History: []disasterv1.BackupRecord{{
+				Name: backupName,
+				VeleroStatus: &velerov1.BackupStatus{
+					Progress: &velerov1.BackupProgress{ItemsBackedUp: 13},
+				},
+				StartTimestamp: &start,
+			}},
+		},
+	}
+	restore := &disasterv1.AppRestore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      restoreName,
+			Namespace: "default",
+		},
+		Status: disasterv1.AppRestoreStatus{
+			Status: disasterv1.PhasePartiallyFailed,
+			RestoreStatus: velerov1.RestoreStatus{
+				Phase:    velerov1.RestorePhasePartiallyFailed,
+				Progress: &velerov1.RestoreProgress{ItemsRestored: 6},
+			},
+			Reason:  "RestorePartiallyFailed",
+			Message: "恢复部分失败: errors=1 warnings=0",
+		},
+	}
+	instance := &disasterv1.DisasterInstance{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "inst-test",
+			Namespace: "default",
+		},
+		Spec: disasterv1.DisasterInstanceSpec{
+			Namespaces: []string{"app"},
+		},
+	}
+	cfg := &disasterv1.DisasterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cfg-test"},
+		Spec: disasterv1.DisasterConfigSpec{
+			SourceCluster:     "src-test",
+			TargetCluster:     "dst-test",
+			StorageRepository: "repo-test",
+		},
+	}
+
+	c := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(rs, backup, restore, instance, cfg).
+		WithStatusSubresource(rs, backup, restore).
+		Build()
+
+	r := &ResourceSyncReconciler{
+		Client:   c,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	if _, err := r.handleRestore(context.Background(), logr.Discard(), rs, cfg, instance, backupName); err != nil {
+		t.Fatalf("handleRestore returned error: %v", err)
+	}
+
+	updated := &disasterv1.ResourceSync{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "rs-test", Namespace: "default"}, updated); err != nil {
+		t.Fatalf("get updated resourcesync: %v", err)
+	}
+	if updated.Status.State != disasterv1.ResourceSyncStateFailed {
+		t.Fatalf("expected state Failed, got %s", updated.Status.State)
+	}
+	if updated.Status.Reason != resourceSyncReasonRestoreFailed {
+		t.Fatalf("expected reason %s, got %s", resourceSyncReasonRestoreFailed, updated.Status.Reason)
+	}
+	if len(updated.Status.History) != 1 {
+		t.Fatalf("expected one history record, got %d", len(updated.Status.History))
+	}
+	record := updated.Status.History[0]
+	if record.Status != string(disasterv1.PhasePartiallyFailed) {
+		t.Fatalf("expected history status PartiallyFailed, got %s", record.Status)
+	}
+	if record.BackupResourceCount != 13 || record.RestoreResourceCount != 6 {
+		t.Fatalf("unexpected history resource counts: backup=%d restore=%d", record.BackupResourceCount, record.RestoreResourceCount)
+	}
+}

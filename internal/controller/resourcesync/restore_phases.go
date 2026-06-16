@@ -89,12 +89,31 @@ func (r *ResourceSyncReconciler) buildResourceSyncRestoreSpecForPhase(
 	source, target := resolveClusters(instance, config)
 
 	imageRules := []disasterv1.ResourceModifierRule(nil)
+	runtimeRules := []disasterv1.RestoreModifierRule(nil)
 	if phase != resourceSyncRestorePhaseCluster {
 		rules, err := r.buildImageRewriteRules(ctx, config, instance, source, target)
 		if err != nil {
 			return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, err
 		}
 		imageRules = rules
+
+		if restorebuilder.HasDynamicImageRewriteActions(instance.Spec.RestorePolicy, disasterv1.RestoreModifierApplyResourceSync) {
+			sourceClient, err := ctrlpkg.GetKubeClientSet(ctx, r.Client, r.Scheme, source)
+			if err != nil {
+				return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, fmt.Errorf("build source cluster client for dynamic image rewrite: %w", err)
+			}
+			rules, _, err := (&restorebuilder.DynamicImageRewriteCompiler{}).CompileDynamicImageRewriteRules(
+				ctx,
+				instance,
+				sourceClient,
+				disasterv1.RestoreModifierApplyResourceSync,
+				restorebuilder.WithDynamicImageRewriteBaseline(config.Spec.SourceCluster, config.Spec.TargetCluster),
+			)
+			if err != nil {
+				return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, fmt.Errorf("compile dynamic image rewrite rules: %w", err)
+			}
+			runtimeRules = rules
+		}
 	}
 
 	spec := restorebuilder.BuildAppRestoreSpec(restorebuilder.BuilderConfig{
@@ -125,6 +144,7 @@ func (r *ResourceSyncReconciler) buildResourceSyncRestoreSpecForPhase(
 		targetClient,
 		restorebuilder.WithBaselineClusters(config.Spec.SourceCluster, config.Spec.TargetCluster),
 		restorebuilder.WithApplyTarget(disasterv1.RestoreModifierApplyResourceSync),
+		restorebuilder.WithRuntimeModifierRules(runtimeRules),
 	)
 	if err != nil {
 		return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, err

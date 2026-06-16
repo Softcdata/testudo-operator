@@ -58,6 +58,7 @@ type ApplyInstanceRestorePolicyOptions struct {
 	ApplyTarget           disasterv1.RestoreModifierApplyTarget
 	SystemRules           []disasterv1.ResourceModifierRule
 	SystemProtectRules    []disasterv1.ResourceModifierRule
+	RuntimeModifierRules  []disasterv1.RestoreModifierRule
 	RestorePolicyOverride *disasterv1.RestorePolicy
 }
 
@@ -90,6 +91,13 @@ func WithSystemRules(rules []disasterv1.ResourceModifierRule) ApplyInstanceResto
 func WithSystemProtectRules(rules []disasterv1.ResourceModifierRule) ApplyInstanceRestorePolicyOption {
 	return func(o *ApplyInstanceRestorePolicyOptions) {
 		o.SystemProtectRules = cloneResourceModifierRules(rules)
+	}
+}
+
+// WithRuntimeModifierRules injects restore DSL rules generated at restore build time.
+func WithRuntimeModifierRules(rules []disasterv1.RestoreModifierRule) ApplyInstanceRestorePolicyOption {
+	return func(o *ApplyInstanceRestorePolicyOptions) {
+		o.RuntimeModifierRules = cloneRestoreModifierRules(rules)
 	}
 }
 
@@ -144,7 +152,7 @@ func hasNewDSLRules(policy *disasterv1.RestorePolicy) bool {
 	if policy == nil {
 		return false
 	}
-	if hasEffectiveBulkModifierActions(policy) {
+	if hasSnapshotBulkModifierActions(policy) {
 		return true
 	}
 	return len(policy.ModifierRules) > 0
@@ -155,7 +163,7 @@ func compileModifierRulesForInstance(
 	options ApplyInstanceRestorePolicyOptions,
 ) ([]disasterv1.ResourceModifierRule, ModifierCompileSummary, error) {
 	summary := ModifierCompileSummary{}
-	totalRuleCount := len(options.SystemRules) + len(options.SystemProtectRules)
+	totalRuleCount := len(options.SystemRules) + len(options.SystemProtectRules) + len(options.RuntimeModifierRules)
 
 	rules, err := compileSystemRuleCandidates(options)
 	if err != nil {
@@ -178,15 +186,18 @@ func compileModifierRulesForInstance(
 		summary.RejectedRuleCount++
 		return nil, summary, err
 	}
+	hasRuntimeRules := len(options.RuntimeModifierRules) > 0
 	if !isUnifiedDirectionResolverEnabled(policy) {
 		if hasNewDSLRules(policy) {
 			return nil, summary, fmt.Errorf("%s: unified direction resolver is disabled for modifierRules", ModifierErrorFeatureDisabled)
 		}
-		compiled, mergeErr := mergeCompiledCandidates(rules, &summary)
-		return compiled, summary, mergeErr
+		if !hasRuntimeRules {
+			compiled, mergeErr := mergeCompiledCandidates(rules, &summary)
+			return compiled, summary, mergeErr
+		}
 	}
 
-	if len(modifierInput) > 0 {
+	if len(modifierInput) > 0 || hasRuntimeRules {
 		flow, source, resolveErr := resolveModifierFlow(
 			options.BaselineSourceCluster,
 			options.BaselineTargetCluster,
@@ -198,6 +209,31 @@ func compileModifierRulesForInstance(
 		}
 		summary.Flow = string(flow)
 		summary.DirectionSource = string(source)
+
+		for idx := range options.RuntimeModifierRules {
+			rule := options.RuntimeModifierRules[idx]
+			if !modifierRuleEnabled(rule) {
+				summary.SkippedRuleCount++
+				continue
+			}
+			if !modifierRuleAppliesToTarget(rule, options.ApplyTarget) {
+				summary.SkippedRuleCount++
+				continue
+			}
+			if !directionPolicyAllows(rule.DirectionPolicy, flow) {
+				summary.SkippedRuleCount++
+				continue
+			}
+			candidate, cErr := compileOneModifierRule(rule, flow, options)
+			if cErr != nil {
+				summary.RejectedRuleCount++
+				return nil, summary, cErr
+			}
+			candidate.priority = rule.Priority
+			candidate.ruleID = normalizedRuleID(rule, idx)
+			candidate.onConflict = normalizeOnConflict(rule.OnConflict)
+			rules = append(rules, candidate)
+		}
 
 		for idx := range modifierInput {
 			rule := modifierInput[idx]

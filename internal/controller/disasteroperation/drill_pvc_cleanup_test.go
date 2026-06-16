@@ -99,7 +99,7 @@ func TestBuildDrillPVCVolumeNameCleanupRule(t *testing.T) {
 	if rule.Conditions.GroupResource != "persistentvolumeclaims" {
 		t.Fatalf("expected pvc groupResource, got %s", rule.Conditions.GroupResource)
 	}
-	if len(rule.Patches) != 1 || rule.Patches[0].Operation != "remove" || rule.Patches[0].Path != "/spec/volumeName" {
+	if len(rule.Patches) != 1 || rule.Patches[0].Operation != "add" || rule.Patches[0].Path != "/spec/volumeName" || rule.Patches[0].Value != "" {
 		t.Fatalf("unexpected patches: %#v", rule.Patches)
 	}
 	contains := map[string]bool{}

@@ -243,6 +243,65 @@ func TestCompileModifierRulesForInstance_EnabledBulkActionMissingSnapshotRejecte
 	}
 }
 
+func TestCompileModifierRulesForInstance_RewriteImageRuntimeRulesDoNotRequireSnapshot(t *testing.T) {
+	t.Parallel()
+
+	instance := baseInstanceWithPolicy(false, nil)
+	instance.Spec.RestorePolicy.UseUnifiedDirectionResolver = boolPtr(true)
+	instance.Spec.RestorePolicy.BulkModifierActions = []disasterv1.BulkModifierAction{{
+		ID:      "rewrite-primary",
+		Action:  disasterv1.BulkModifierActionRewriteImage,
+		Enabled: boolPtr(true),
+		ApplyTo: []disasterv1.RestoreModifierApplyTarget{
+			disasterv1.RestoreModifierApplyResourceSync,
+		},
+		ImageRewrite: &disasterv1.DynamicImageRewriteConfig{
+			SourcePrefix: "10.11.11.1:5000/",
+			TargetPrefix: "registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/",
+		},
+	}}
+	instance.Spec.RestorePolicy.ModifierRuleSnapshot = nil
+	instance.Spec.RestorePolicy.ModifierRuleSnapshotHash = ""
+
+	compiled, summary, err := compileModifierRulesForInstance(
+		instance,
+		ApplyInstanceRestorePolicyOptions{
+			BaselineSourceCluster: "cluster-a",
+			BaselineTargetCluster: "cluster-b",
+			ApplyTarget:           disasterv1.RestoreModifierApplyResourceSync,
+			RuntimeModifierRules: []disasterv1.RestoreModifierRule{{
+				ID:       "runtime-image-rewrite-0000-0000",
+				Mode:     disasterv1.RestoreModifierModeReversible,
+				ApplyTo:  []disasterv1.RestoreModifierApplyTarget{disasterv1.RestoreModifierApplyResourceSync},
+				Priority: -100,
+				Conditions: disasterv1.Conditions{
+					GroupResource:     "deployments.apps",
+					ResourceNameRegex: "^demo$",
+					Namespaces:        []string{"demo"},
+				},
+				DirectionPolicy: disasterv1.RestoreModifierDirectionPolicyAuto,
+				Pair: &disasterv1.RestoreModifierPair{
+					Path:        "/spec/template/spec/containers/0/image",
+					SourceValue: "10.11.11.1:5000/blueking/app:v1.31.0",
+					TargetValue: "registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/blueking/app:v1.31.0",
+				},
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatalf("expected runtime rewriteImage compile success without snapshot, got %v", err)
+	}
+	if len(compiled) != 1 {
+		t.Fatalf("expected one compiled runtime rule, got %d", len(compiled))
+	}
+	if got := compiled[0].Patches[0].Value; got != "registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/blueking/app:v1.31.0" {
+		t.Fatalf("unexpected compiled target value: %s", got)
+	}
+	if summary.AppliedRuleCount != 1 {
+		t.Fatalf("expected applied rule count 1, got %+v", summary)
+	}
+}
+
 func TestCompileModifierRulesForInstance_ComplexityLimits(t *testing.T) {
 	t.Parallel()
 

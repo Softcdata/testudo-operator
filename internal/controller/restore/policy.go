@@ -183,9 +183,19 @@ func ApplyInstanceRestorePolicy(
 		summary.Source = "instance"
 	}
 	if actions := effectiveBulkModifierActions(policy); len(actions) > 0 {
-		summary.ModifierSource = "bulkActions"
+		snapshotActions := effectiveSnapshotBulkModifierActions(policy)
+		switch {
+		case len(snapshotActions) > 0 && len(snapshotActions) < len(actions):
+			summary.ModifierSource = "bulkActionsMixed"
+		case len(snapshotActions) > 0:
+			summary.ModifierSource = "bulkActions"
+		default:
+			summary.ModifierSource = "runtimeBulkActions"
+		}
 		summary.ModifierBulkActionCount = len(actions)
-		summary.ModifierSnapshotHash = strings.TrimSpace(policy.ModifierRuleSnapshotHash)
+		if len(snapshotActions) > 0 {
+			summary.ModifierSnapshotHash = strings.TrimSpace(policy.ModifierRuleSnapshotHash)
+		}
 	}
 
 	summary.ResourceSelectionMode = applyResourceSelectionPolicy(spec, policy.ResourceSelection)

@@ -70,6 +70,9 @@ type BuilderConfig struct {
 	// DataResourceModifierRules overrides default trafficless modifiers in data restore mode.
 	// When empty, builder falls back to default trafficless modifiers.
 	DataResourceModifierRules []disasterv1.ResourceModifierRule
+
+	// DataRestoreHooks are Velero-native hooks for data restore mode.
+	DataRestoreHooks *velerov1.RestoreHooks
 }
 
 // BuildAppRestoreSpec 根据配置构建 AppRestoreSpec
@@ -141,6 +144,9 @@ func buildDataRestoreSpec(cfg BuilderConfig) disasterv1.AppRestoreSpec {
 		},
 		ResourceModifierRules: dataModifiers,
 	}
+	if cfg.DataRestoreHooks != nil {
+		spec.Template.Hooks = *cfg.DataRestoreHooks
+	}
 
 	return spec
 }
@@ -203,7 +209,7 @@ func makeTrafficlessModifiers() []disasterv1.ResourceModifierRule {
 	}
 }
 
-// MakePVCVolumeNameCleanupRule builds a system-level PVC rule that removes spec.volumeName.
+// MakePVCVolumeNameCleanupRule builds a system-level PVC rule that clears spec.volumeName.
 // This is used for first-time data restore to avoid restoring with stale PV bindings.
 func MakePVCVolumeNameCleanupRule(namespaces []string) disasterv1.ResourceModifierRule {
 	return disasterv1.ResourceModifierRule{
@@ -212,8 +218,11 @@ func MakePVCVolumeNameCleanupRule(namespaces []string) disasterv1.ResourceModifi
 			Namespaces:    append([]string(nil), namespaces...),
 		},
 		Patches: []disasterv1.JSONPatch{{
-			Operation: "remove",
+			// Use add with an empty value instead of remove. RFC6902 remove fails when
+			// Velero restores a PVC that no longer has spec.volumeName in the backup.
+			Operation: "add",
 			Path:      "/spec/volumeName",
+			Value:     "",
 		}},
 	}
 }

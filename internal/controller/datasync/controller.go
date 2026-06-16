@@ -21,6 +21,7 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -432,20 +433,21 @@ func (r *DataSyncReconciler) executeSync(ctx context.Context, log logr.Logger, d
 		return r.failDataSync(ctx, dataSync, clusterPair, dataSyncReasonDependencyFailed, msg)
 	}
 
-	// AppBackup 存在
-	// 关键修复：检查 AppBackup 的 Cluster 是否正确（反向保护场景下，Source 可能已改变）
-	// 这解决了用户报告的“数据同步反向保护后应用备份集群不对”的问题
-	if appBackup.Spec.Cluster != sourceCluster {
-		log.Info("更新 AppBackup SourceCluster (反向保护 detected)", "old", appBackup.Spec.Cluster, "new", sourceCluster)
-		appBackup.Spec.Cluster = sourceCluster
-		if err := r.Update(ctx, appBackup); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{Requeue: true}, nil
-	}
-
 	// 如果 LastBackupName 为空，说明需要确定或等待本次备份
 	if dataSync.Status.LastBackupName == "" {
+		// 对齐 desired spec/template 后再确定或触发本次备份。
+		// 这同时覆盖反向保护后的 source cluster 变化，以及实例 veleroHooks 更新后的 Template.Hooks 变化。
+		desiredBackupSpec := r.buildAppBackupSpec(instance, config)
+		if appBackup.Spec.Cluster != desiredBackupSpec.Cluster || !reflect.DeepEqual(appBackup.Spec.Template, desiredBackupSpec.Template) {
+			log.Info("更新 DataSync AppBackup desired template", "oldCluster", appBackup.Spec.Cluster, "newCluster", desiredBackupSpec.Cluster)
+			appBackup.Spec.Cluster = desiredBackupSpec.Cluster
+			appBackup.Spec.Template = desiredBackupSpec.Template
+			if err := r.Update(ctx, appBackup); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
+		}
+
 		if backupName, ok := ctrlcommon.CurrentBackupActionVeleroBackupName(appBackupName, appBackup, dataSync.Status.LastSyncTime); ok {
 			if rec, found := ctrlcommon.FindBackupRecordByName(appBackup.Status.History, backupName); found {
 				log.Info("找到本次 Action 生成的 Velero Backup", "name", rec.Name)
@@ -489,15 +491,6 @@ func (r *DataSyncReconciler) executeSync(ctx context.Context, log logr.Logger, d
 		}
 		// 3. Action 没发送或已是上次同步之前的旧 Action，发送新 Action
 		log.Info("触发新备份 Action", "appBackup", appBackupName)
-
-		// 关键修复：更新 AppBackup 的 Cluster 以支持 Reprotect 后方向变化
-		// Reprotect 后 Primary/Secondary 互换，备份应该在新的 Primary 执行
-		newSpec := r.buildAppBackupSpec(instance, config)
-		if appBackup.Spec.Cluster != newSpec.Cluster {
-			log.Info("检测到集群方向变化，更新 AppBackup", "oldCluster", appBackup.Spec.Cluster, "newCluster", newSpec.Cluster)
-			appBackup.Spec.Cluster = newSpec.Cluster
-			appBackup.Spec.Template = newSpec.Template
-		}
 
 		appBackup.Spec.Action = &disasterv1.BackupAction{
 			Type:      "Backup",
@@ -625,10 +618,16 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 				var backupItems int
 				var startTime *metav1.Time
 				appBackup := &disasterv1.AppBackup{}
+				var backupHookStatus *disasterv1.SyncHistoryHookStatus
 				if err := r.Get(ctx, types.NamespacedName{Namespace: dataSync.Namespace, Name: fmt.Sprintf("ds-%s", dataSync.Name)}, appBackup); err == nil {
 					for _, rec := range appBackup.Status.History {
 						if rec.Name == backupName {
-							backupItems = rec.VeleroStatus.Progress.ItemsBackedUp
+							if rec.VeleroStatus != nil {
+								if rec.VeleroStatus.Progress != nil {
+									backupItems = rec.VeleroStatus.Progress.ItemsBackedUp
+								}
+								backupHookStatus = syncHistoryHookStatus(rec.VeleroStatus.HookStatus)
+							}
 							startTime = rec.StartTimestamp
 							break
 						}
@@ -641,6 +640,7 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 					RestoreName:          restoreName,
 					BackupResourceCount:  backupItems,
 					RestoreResourceCount: 0,
+					BackupHookStatus:     backupHookStatus,
 					Status:               string(disasterv1.PhaseFailed),
 				}
 				if startTime != nil {
@@ -700,15 +700,15 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 	// 检查 Restore 状态
 	// AppRestore 的 Status.Status 是 Enum
 	status := restore.Status.Status
-	if status == disasterv1.PhaseSucceeded || status == disasterv1.PhaseFailed {
+	if status == disasterv1.PhaseSucceeded || disasterv1.IsFailedAppRestorePhase(status) {
 		msg := "数据同步成功完成"
 		finalState := disasterv1.DataSyncStateReady
-		if status == disasterv1.PhaseFailed {
-			msg = fmt.Sprintf("数据恢复失败: %s", restoreName)
+		if disasterv1.IsFailedAppRestorePhase(status) {
+			msg = fmt.Sprintf("数据恢复失败: %s status=%s", restoreName, status)
 			finalState = disasterv1.DataSyncStateFailed
 			helper.SetStatusError(&dataSync.Status, dataSyncReasonRestoreFailed, msg)
 			helper.SetConditionError(&dataSync.Status.Conditions, "RestoreFailed", dataSyncReasonRestoreFailed, msg)
-			log.Info("AppRestore 失败", "name", restoreName)
+			log.Info("AppRestore 失败", "name", restoreName, "status", status)
 		} else {
 			log.Info("AppRestore 成功", "name", restoreName)
 			helper.ClearStatusError(&dataSync.Status)
@@ -731,9 +731,15 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 		if err := r.Get(ctx, types.NamespacedName{Namespace: dataSync.Namespace, Name: fmt.Sprintf("ds-%s", dataSync.Name)}, appBackup); err == nil {
 			var backupItems int
 			var startTime *metav1.Time
+			var backupHookStatus *disasterv1.SyncHistoryHookStatus
 			for _, rec := range appBackup.Status.History {
 				if rec.Name == backupName {
-					backupItems = rec.VeleroStatus.Progress.ItemsBackedUp
+					if rec.VeleroStatus != nil {
+						if rec.VeleroStatus.Progress != nil {
+							backupItems = rec.VeleroStatus.Progress.ItemsBackedUp
+						}
+						backupHookStatus = syncHistoryHookStatus(rec.VeleroStatus.HookStatus)
+					}
 					startTime = rec.StartTimestamp
 					break
 				}
@@ -751,6 +757,8 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 				RestoreName:          restoreName,
 				BackupResourceCount:  backupItems,
 				RestoreResourceCount: restoreItems,
+				BackupHookStatus:     backupHookStatus,
+				RestoreHookStatus:    syncHistoryHookStatus(restore.Status.RestoreStatus.HookStatus),
 				Status:               string(status),
 			}
 			if startTime != nil {
@@ -844,7 +852,7 @@ func (r *DataSyncReconciler) buildAppBackupSpec(instance *disasterv1.DisasterIns
 	source, _ := resolveClusters(instance, config)
 	falseVar := false
 	trueVar := true
-	return disasterv1.AppBackupSpec{
+	spec := disasterv1.AppBackupSpec{
 		Cluster: source,
 		// DisasterPolicy: config.Spec.DataSyncPolicy, // V2 does not use V1 DisasterPolicy
 		Template: velerov1.BackupSpec{
@@ -857,6 +865,10 @@ func (r *DataSyncReconciler) buildAppBackupSpec(instance *disasterv1.DisasterIns
 			DefaultVolumesToFsBackup: &trueVar,
 		},
 	}
+	if hooks := dataBackupHooks(instance); hooks != nil {
+		spec.Template.Hooks = *hooks
+	}
+	return spec
 }
 
 // buildAppRestoreSpec 构建 AppRestore 的 Spec (包含 Trafficless 配置)
@@ -889,6 +901,7 @@ func (r *DataSyncReconciler) buildAppRestoreSpec(
 		IncludedNamespaces:        instance.Spec.Namespaces,
 		IsForDrill:                false,
 		DataResourceModifierRules: dataModifiers,
+		DataRestoreHooks:          dataRestoreHooks(instance),
 	})
 
 	var targetClient client.Client
@@ -914,6 +927,30 @@ func (r *DataSyncReconciler) buildAppRestoreSpec(
 		return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, err
 	}
 	return spec, summary, nil
+}
+
+func dataBackupHooks(instance *disasterv1.DisasterInstance) *velerov1.BackupHooks {
+	if instance == nil || instance.Spec.VeleroHooks == nil {
+		return nil
+	}
+	return instance.Spec.VeleroHooks.DataBackup
+}
+
+func dataRestoreHooks(instance *disasterv1.DisasterInstance) *velerov1.RestoreHooks {
+	if instance == nil || instance.Spec.VeleroHooks == nil {
+		return nil
+	}
+	return instance.Spec.VeleroHooks.DataRestore
+}
+
+func syncHistoryHookStatus(status *velerov1.HookStatus) *disasterv1.SyncHistoryHookStatus {
+	if status == nil {
+		return nil
+	}
+	return &disasterv1.SyncHistoryHookStatus{
+		HooksAttempted: status.HooksAttempted,
+		HooksFailed:    status.HooksFailed,
+	}
 }
 
 // shouldInjectInitialPVCVolumeNameCleanup returns true only for the first data restore during instance initialization.
