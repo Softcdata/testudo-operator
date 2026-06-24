@@ -59,6 +59,7 @@
 - [x] 6.5 实现内部 `disaster-license issue`
 - [x] 6.6 实现内部 `disaster-license verify`
 - [x] 6.7 输出发证工具、客户指纹工具、operator verifier、server verifier 共享的 conformance test vectors
+- [x] 6.8 实现内部 `disaster-license serve` 本地 Web 发证页面
 
 ## 7. Verification
 - [x] 7.1 `openspec validate add-platform-license-gate --strict`
@@ -72,3 +73,4 @@
 - [ ] 7.9 真实环境 runbook：已有 3 个未注解 Cluster 升级后被 grandfather，新增第 4 个仍受限制
 - [ ] 7.10 真实环境 runbook：Helm 安装/升级后 `disaster-operator-validating-webhook-configuration` 存在，且 direct `kubectl create cluster` 第 3 个 Cluster 被 admission 拒绝
 - [ ] 7.11 归档前确认 Operator、Server、Web、Chart、webhook、客户侧工具、内部发证工具和 conformance test vectors 均已完成
+- [x] 7.12 内部发证 Web API 单元测试通过 `go test ./...`
