@@ -67,7 +67,7 @@ http://<NodeIP>:30087
 
 ## 系统架构
 
-![Testudo 系统架构](static/img/diagrams/1.png)
+![Testudo 系统架构](static/img/diagrams/architecture.png)
 
 Testudo 整体分为五层：
 
@@ -282,7 +282,15 @@ cp .env.example .env.dev
 pnpm dev
 ```
 
-浏览器访问 `http://localhost:9009`（或 `.env` 中配置的端口）。本地联调时将开发代理指向正在运行的 `testudo-server`，例如 `http://127.0.0.1:8080`。
+浏览器访问 `http://localhost:9009`（或 `.env` 中配置的端口）。
+
+**网络约定**：浏览器始终请求同源路径（`/apis/*`、`/login`、`/refresh_token`），`axios` 的 `baseURL` 留空。本地开发由 Vite 代理转发（见 `build/proxy.ts`）；生产由 Nginx 反代（见 `nginx.conf.template`）。只需在 `.env.dev` 配置一项即可：
+
+```json
+[["/apis","http://127.0.0.1:8080"]]
+```
+
+`/login` 与 `/refresh_token` 会自动代理到同一后端。
 
 #### 常用脚本
 
@@ -303,10 +311,12 @@ pnpm dev
 
 | 变量 | 说明 |
 | --- | --- |
-| `VITE_BASE_URL` | 后端或网关地址 |
-| `VITE_URL_PROXYS` | 开发代理（JSON 数组），如 `[["/apis","http://127.0.0.1:8080"]]` |
-| `VITE_API_PREFIX` | API 路径前缀（默认 `/apis`） |
+| `VITE_HTTP_PROXY` | 是否启用开发代理（根 `.env` 或 `.env.dev`） |
+| `VITE_URL_PROXYS` | 开发代理目标，如 `[["/apis","http://127.0.0.1:8080"]]` |
+| `VITE_BASE_URL` | 可选；留空走同源反代。仅直连后端调试时填写绝对地址 |
+| `VITE_API_PREFIX` | 网关前缀（默认 `/apis`），接口 path 以此开头 |
 | `VITE_ROUTER_HISTORY_MODE` | `hash` 或 `history` |
+| `VITE_OUTPUT_DIR` | 构建输出目录（`build:prod` 默认为 `dist-prod`） |
 
 #### 目录结构
 
