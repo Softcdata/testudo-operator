@@ -3189,6 +3189,12 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 	if drillConfig != nil && len(drillConfig.NamespaceMapping) > 0 {
 		namespaceMapping = drillConfig.NamespaceMapping
 	}
+	preparedDrillDataRestoreHooks, hookMarkerRules := restore.PrepareTrafficlessDataRestoreHooks(
+		drillDataRestoreHooks,
+		instance.Spec.Namespaces,
+		namespaceMapping,
+	)
+	hasRestorePolicy := instance.Spec.RestorePolicy != nil || drillRestorePolicy != nil
 
 	// 使用共享构建器
 	restoreSpec := restore.BuildAppRestoreSpec(restore.BuilderConfig{
@@ -3201,10 +3207,13 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 		IncludedNamespaces: instance.Spec.Namespaces,
 		NamespaceMapping:   namespaceMapping,
 		IsForDrill:         true,
-		DataRestoreHooks:   drillDataRestoreHooks,
+		DataRestoreHooks:   preparedDrillDataRestoreHooks,
 	})
+	if len(hookMarkerRules) > 0 && !hasRestorePolicy {
+		restoreSpec.ResourceModifierRules = append(restoreSpec.ResourceModifierRules, hookMarkerRules...)
+	}
 	cleanupRule, needsCleanup := buildDrillPVCVolumeNameCleanupRule(instance, namespaceMapping)
-	if needsCleanup && instance.Spec.RestorePolicy == nil {
+	if needsCleanup && !hasRestorePolicy {
 		// No restorePolicy path: ApplyInstanceRestorePolicy returns early, so append directly here.
 		restoreSpec.ResourceModifierRules = append(restoreSpec.ResourceModifierRules, cleanupRule)
 	}
@@ -3222,9 +3231,16 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 		restore.WithApplyTarget(disasterv1.RestoreModifierApplyDrill),
 		restore.WithRestorePolicyOverride(drillRestorePolicy),
 	}
-	if needsCleanup && instance.Spec.RestorePolicy != nil {
+	systemProtectRules := make([]disasterv1.ResourceModifierRule, 0, 1+len(hookMarkerRules))
+	if needsCleanup && hasRestorePolicy {
 		// restorePolicy path: inject as system-protect to prevent user rule override.
-		applyOpts = append(applyOpts, restore.WithSystemProtectRules([]disasterv1.ResourceModifierRule{cleanupRule}))
+		systemProtectRules = append(systemProtectRules, cleanupRule)
+	}
+	if len(hookMarkerRules) > 0 && hasRestorePolicy {
+		systemProtectRules = append(systemProtectRules, hookMarkerRules...)
+	}
+	if len(systemProtectRules) > 0 {
+		applyOpts = append(applyOpts, restore.WithSystemProtectRules(systemProtectRules))
 	}
 	policySummary, err := restore.ApplyInstanceRestorePolicy(
 		ctx,

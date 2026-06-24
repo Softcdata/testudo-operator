@@ -52,8 +52,8 @@ func TestBuildAppRestoreSpec_KeepsTrafficlessSemanticsWhenImageRewriteEnabled(t 
 	if rule.Conditions.GroupResource != "pods" {
 		t.Fatalf("expected trafficless rule for pods, got %s", rule.Conditions.GroupResource)
 	}
-	if len(rule.Patches) != 4 {
-		t.Fatalf("expected 4 trafficless patches, got %d", len(rule.Patches))
+	if len(rule.Patches) != 5 {
+		t.Fatalf("expected 5 trafficless patches, got %d", len(rule.Patches))
 	}
 
 	patchByPath := map[string]disasterv1.JSONPatch{}
@@ -69,6 +69,9 @@ func TestBuildAppRestoreSpec_KeepsTrafficlessSemanticsWhenImageRewriteEnabled(t 
 	}
 	if patchByPath["/spec/containers/0/command"].Value != `["sleep","7200"]` {
 		t.Fatalf("unexpected trafficless command patch: %s", patchByPath["/spec/containers/0/command"].Value)
+	}
+	if patchByPath["/spec/containers/0/args"].Value != "[]" {
+		t.Fatalf("unexpected trafficless args patch: %s", patchByPath["/spec/containers/0/args"].Value)
 	}
 	if patchByPath["/metadata/labels"].Value != `{"trafficless": "true"}` {
 		t.Fatalf("unexpected labels patch: %s", patchByPath["/metadata/labels"].Value)

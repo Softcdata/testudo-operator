@@ -884,7 +884,15 @@ func (r *DataSyncReconciler) buildAppRestoreSpec(
 	shouldCleanupPVCVolumeName := shouldInjectInitialPVCVolumeNameCleanup(dataSync, instance)
 	cleanupPVCVolumeRule := restorebuilder.MakePVCVolumeNameCleanupRule(instance.Spec.Namespaces)
 
+	preparedDataRestoreHooks, hookMarkerRules := restorebuilder.PrepareTrafficlessDataRestoreHooks(
+		dataRestoreHooks(instance),
+		instance.Spec.Namespaces,
+		nil,
+	)
 	dataModifiers := r.makeTrafficlessModifiers(dataSync)
+	if len(hookMarkerRules) > 0 && instance.Spec.RestorePolicy == nil {
+		dataModifiers = append(dataModifiers, hookMarkerRules...)
+	}
 	// When restorePolicy is absent, ApplyInstanceRestorePolicy returns early.
 	// Keep first-time PVC cleanup effective by appending it directly in this branch.
 	if shouldCleanupPVCVolumeName && instance.Spec.RestorePolicy == nil {
@@ -901,7 +909,7 @@ func (r *DataSyncReconciler) buildAppRestoreSpec(
 		IncludedNamespaces:        instance.Spec.Namespaces,
 		IsForDrill:                false,
 		DataResourceModifierRules: dataModifiers,
-		DataRestoreHooks:          dataRestoreHooks(instance),
+		DataRestoreHooks:          preparedDataRestoreHooks,
 	})
 
 	var targetClient client.Client
@@ -917,9 +925,16 @@ func (r *DataSyncReconciler) buildAppRestoreSpec(
 		restorebuilder.WithBaselineClusters(config.Spec.SourceCluster, config.Spec.TargetCluster),
 		restorebuilder.WithApplyTarget(disasterv1.RestoreModifierApplyDataSync),
 	}
+	systemProtectRules := make([]disasterv1.ResourceModifierRule, 0, 1+len(hookMarkerRules))
 	// With restorePolicy present, inject as system-protect so user rules cannot override this safety patch.
 	if shouldCleanupPVCVolumeName && instance.Spec.RestorePolicy != nil {
-		applyOpts = append(applyOpts, restorebuilder.WithSystemProtectRules([]disasterv1.ResourceModifierRule{cleanupPVCVolumeRule}))
+		systemProtectRules = append(systemProtectRules, cleanupPVCVolumeRule)
+	}
+	if len(hookMarkerRules) > 0 && instance.Spec.RestorePolicy != nil {
+		systemProtectRules = append(systemProtectRules, hookMarkerRules...)
+	}
+	if len(systemProtectRules) > 0 {
+		applyOpts = append(applyOpts, restorebuilder.WithSystemProtectRules(systemProtectRules))
 	}
 
 	summary, err := restorebuilder.ApplyInstanceRestorePolicy(ctx, &spec, instance, targetClient, applyOpts...)
@@ -1011,6 +1026,13 @@ func (r *DataSyncReconciler) makeTrafficlessModifiers(ds *disasterv1.DataSync) [
 			Operation: "add",
 			Path:      "/spec/containers/0/command",
 			Value:     string(commandJSON),
+		},
+		// command 已改为 trafficless 启动命令，必须同步清空原始 args。
+		// 否则 busybox sleep 会把原 workload args 当作参数并退出，post restore exec hook 无法稳定进入容器。
+		{
+			Operation: "add",
+			Path:      "/spec/containers/0/args",
+			Value:     "[]",
 		},
 	}
 

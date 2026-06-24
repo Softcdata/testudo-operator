@@ -175,7 +175,8 @@ func makeSkeletonModifiers() []disasterv1.ResourceModifierRule {
 }
 
 // makeTrafficlessModifiers 生成 Trafficless Restore 规则 (用于数据恢复)
-// 恢复时 ResourceModifier 替换 Image 为 busybox，移除所有 Labels，确保 Service 不导流
+// 恢复时 ResourceModifier 替换 Image 为 busybox，移除所有 Labels，确保 Service 不导流。
+// 同时显式设置 command/args，让临时 Pod 在 Velero exec restore hook 执行前保持可运行。
 func makeTrafficlessModifiers() []disasterv1.ResourceModifierRule {
 	podPatches := []disasterv1.JSONPatch{
 		// 清除所有原有标签 - 替换为只包含 trafficless 的 map
@@ -196,6 +197,17 @@ func makeTrafficlessModifiers() []disasterv1.ResourceModifierRule {
 			Operation: "replace",
 			Path:      "/spec/containers/0/image",
 			Value:     "busybox:1.36",
+		},
+		// 覆盖业务镜像原有 command，避免 busybox 执行不存在的入口命令。
+		{
+			Operation: "add",
+			Path:      "/spec/containers/0/command",
+			Value:     `["/bin/sh","-c"]`,
+		},
+		{
+			Operation: "add",
+			Path:      "/spec/containers/0/args",
+			Value:     `["while true; do sleep 3600; done"]`,
 		},
 	}
 

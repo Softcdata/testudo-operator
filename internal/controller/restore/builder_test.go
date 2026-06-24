@@ -87,7 +87,7 @@ func TestBuildAppRestoreSpec_ResourceRestoreIncludesImageRulesForMultiContainer(
 	}
 }
 
-func TestBuildAppRestoreSpec_DataRestoreUsesIdempotentOwnerReferencesPatch(t *testing.T) {
+func TestBuildAppRestoreSpec_DataRestoreTrafficlessPodIsDetachedAndRunnable(t *testing.T) {
 	spec := BuildAppRestoreSpec(BuilderConfig{
 		RestoreType:        RestoreTypeData,
 		BackupSource:       "ds-demo",
@@ -107,11 +107,20 @@ func TestBuildAppRestoreSpec_DataRestoreUsesIdempotentOwnerReferencesPatch(t *te
 	}
 
 	var ownerRefPatch *disasterv1.JSONPatch
+	var commandPatch *disasterv1.JSONPatch
+	var argsPatch *disasterv1.JSONPatch
 	for i := range spec.ResourceModifierRules[0].Patches {
 		patch := &spec.ResourceModifierRules[0].Patches[i]
 		if patch.Path == "/metadata/ownerReferences" {
 			ownerRefPatch = patch
-			break
+			continue
+		}
+		if patch.Path == "/spec/containers/0/command" {
+			commandPatch = patch
+			continue
+		}
+		if patch.Path == "/spec/containers/0/args" {
+			argsPatch = patch
 		}
 	}
 	if ownerRefPatch == nil {
@@ -122,6 +131,24 @@ func TestBuildAppRestoreSpec_DataRestoreUsesIdempotentOwnerReferencesPatch(t *te
 	}
 	if ownerRefPatch.Value != "[]" {
 		t.Fatalf("expected ownerReferences value [] , got %s", ownerRefPatch.Value)
+	}
+	if commandPatch == nil {
+		t.Fatalf("expected command patch in trafficless modifiers")
+	}
+	if commandPatch.Operation != "add" {
+		t.Fatalf("expected command operation add, got %s", commandPatch.Operation)
+	}
+	if commandPatch.Value != `["/bin/sh","-c"]` {
+		t.Fatalf("expected command value [\"/bin/sh\",\"-c\"], got %s", commandPatch.Value)
+	}
+	if argsPatch == nil {
+		t.Fatalf("expected keepalive args patch in trafficless modifiers")
+	}
+	if argsPatch.Operation != "add" {
+		t.Fatalf("expected keepalive args operation add, got %s", argsPatch.Operation)
+	}
+	if argsPatch.Value != `["while true; do sleep 3600; done"]` {
+		t.Fatalf("expected keepalive args value, got %s", argsPatch.Value)
 	}
 }
 
