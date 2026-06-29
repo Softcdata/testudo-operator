@@ -66,7 +66,6 @@ func TestCheckVeleroVersionCompatibility(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			msg := checkVeleroVersionCompatibility(tc.version)
@@ -200,6 +199,27 @@ func TestCheckVeleroCompatibility(t *testing.T) {
 	})
 }
 
+func readyVeleroDeployment() *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "velero", Namespace: VeleroNamespace},
+		Status: appsv1.DeploymentStatus{
+			ReadyReplicas:       1,
+			AvailableReplicas:   1,
+			UnavailableReplicas: 0,
+		},
+	}
+}
+
+func readyNodeAgentDaemonSet(desired int32) *appsv1.DaemonSet {
+	return &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-agent", Namespace: VeleroNamespace},
+		Status: appsv1.DaemonSetStatus{
+			DesiredNumberScheduled: desired,
+			NumberReady:            desired,
+		},
+	}
+}
+
 func TestDiagnoseVeleroStatusPendingIgnoresNonRuntimePods(t *testing.T) {
 	t.Parallel()
 
@@ -239,6 +259,165 @@ func TestDiagnoseVeleroStatusPendingIgnoresNonRuntimePods(t *testing.T) {
 	}
 	if strings.Contains(message, "repo-maintain-job-failed") {
 		t.Fatalf("expected non-runtime pod to be ignored, got message %q", message)
+	}
+}
+
+func TestDiagnoseVeleroStatusPendingIgnoresTerminalRuntimePods(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	scheme := buildCleanupTestScheme(t)
+	now := metav1.Now()
+	cli := fakeclient.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			readyVeleroDeployment(),
+			readyNodeAgentDaemonSet(1),
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "velero-85fb996d77-cw7zn",
+					Namespace: VeleroNamespace,
+					Labels:    map[string]string{"app.kubernetes.io/name": "velero"},
+				},
+				Status: corev1.PodStatus{
+					Phase:  corev1.PodFailed,
+					Reason: "Evicted",
+					ContainerStatuses: []corev1.ContainerStatus{{
+						State: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{Reason: "ContainerStatusUnknown"},
+						},
+					}},
+				},
+			},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "node-agent-stale",
+					Namespace:         VeleroNamespace,
+					DeletionTimestamp: &now,
+					Finalizers:        []string{"testudo.softcdata.com/test"},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodRunning,
+				},
+			},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "velero-succeeded",
+					Namespace: VeleroNamespace,
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodSucceeded,
+				},
+			},
+		).
+		Build()
+
+	reason, message := diagnoseVeleroStatusPending(ctx, cli, 17)
+	if reason != clusterReasonVeleroStatusSyncPending {
+		t.Fatalf("expected status-sync pending reason, got %s (%s)", reason, message)
+	}
+	for _, podName := range []string{"velero-85fb996d77-cw7zn", "node-agent-stale", "velero-succeeded"} {
+		if strings.Contains(message, podName) {
+			t.Fatalf("expected terminal runtime pod %s to be ignored, got message %q", podName, message)
+		}
+	}
+}
+
+func TestDiagnoseVeleroStatusPendingDetectsActiveRuntimePodIssue(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	scheme := buildCleanupTestScheme(t)
+	cli := fakeclient.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			readyVeleroDeployment(),
+			readyNodeAgentDaemonSet(1),
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "velero-active",
+					Namespace: VeleroNamespace,
+					Labels:    map[string]string{"app.kubernetes.io/name": "velero"},
+				},
+				Status: corev1.PodStatus{
+					Phase: corev1.PodPending,
+					ContainerStatuses: []corev1.ContainerStatus{{
+						State: corev1.ContainerState{
+							Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"},
+						},
+					}},
+				},
+			},
+		).
+		Build()
+
+	reason, message := diagnoseVeleroStatusPending(ctx, cli, 18)
+	if reason != clusterReasonVeleroRuntimeNotReady {
+		t.Fatalf("expected runtime-not-ready reason, got %s (%s)", reason, message)
+	}
+	if !strings.Contains(message, "pod velero-active ImagePullBackOff") {
+		t.Fatalf("expected active pod issue in message, got %q", message)
+	}
+}
+
+func TestDiagnoseVeleroStatusPendingDetectsControllerAggregateIssues(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	scheme := buildCleanupTestScheme(t)
+
+	cases := []struct {
+		name    string
+		objects []client.Object
+		want    string
+	}{
+		{
+			name: "deployment unavailable",
+			objects: []client.Object{
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{Name: "velero", Namespace: VeleroNamespace},
+					Status: appsv1.DeploymentStatus{
+						ReadyReplicas:       0,
+						AvailableReplicas:   0,
+						UnavailableReplicas: 1,
+					},
+				},
+				readyNodeAgentDaemonSet(1),
+			},
+			want: "deployment velero ready=0 available=0 unavailable=1",
+		},
+		{
+			name: "node-agent unavailable",
+			objects: []client.Object{
+				readyVeleroDeployment(),
+				&appsv1.DaemonSet{
+					ObjectMeta: metav1.ObjectMeta{Name: "node-agent", Namespace: VeleroNamespace},
+					Status: appsv1.DaemonSetStatus{
+						DesiredNumberScheduled: 2,
+						NumberReady:            1,
+					},
+				},
+			},
+			want: "daemonset node-agent ready=1 desired=2",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cli := fakeclient.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(tc.objects...).
+				Build()
+
+			reason, message := diagnoseVeleroStatusPending(ctx, cli, 19)
+			if reason != clusterReasonVeleroRuntimeNotReady {
+				t.Fatalf("expected runtime-not-ready reason, got %s (%s)", reason, message)
+			}
+			if !strings.Contains(message, tc.want) {
+				t.Fatalf("expected %q in message, got %q", tc.want, message)
+			}
+		})
 	}
 }
 

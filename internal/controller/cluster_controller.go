@@ -220,6 +220,33 @@ func podWaitingReason(statuses []corev1.ContainerStatus) string {
 	return ""
 }
 
+func hasTerminatedContainerReason(statuses []corev1.ContainerStatus, reason string) bool {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return false
+	}
+	for _, status := range statuses {
+		if status.State.Terminated != nil && strings.TrimSpace(status.State.Terminated.Reason) == reason {
+			return true
+		}
+	}
+	return false
+}
+
+func isTerminalVeleroRuntimePod(pod corev1.Pod) bool {
+	if pod.DeletionTimestamp != nil {
+		return true
+	}
+	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+		return true
+	}
+	if strings.TrimSpace(pod.Status.Reason) == "Evicted" {
+		return true
+	}
+	return hasTerminatedContainerReason(pod.Status.InitContainerStatuses, "ContainerStatusUnknown") ||
+		hasTerminatedContainerReason(pod.Status.ContainerStatuses, "ContainerStatusUnknown")
+}
+
 func summarizeVeleroPodIssue(pod corev1.Pod) string {
 	if pod.Status.Phase == corev1.PodSucceeded {
 		return ""
@@ -294,6 +321,9 @@ func diagnoseVeleroStatusPending(ctx context.Context, cli client.Client, generat
 		if err := cli.List(ctx, podList, client.InNamespace(VeleroNamespace)); err == nil {
 			for _, pod := range podList.Items {
 				if !isVeleroRuntimePod(pod) {
+					continue
+				}
+				if isTerminalVeleroRuntimePod(pod) {
 					continue
 				}
 				summary := summarizeVeleroPodIssue(pod)
