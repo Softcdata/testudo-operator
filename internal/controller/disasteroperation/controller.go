@@ -4347,19 +4347,10 @@ func (r *DisasterOperationReconciler) cleanupTrafficlessPods(ctx context.Context
 		}
 
 		if len(pods.Items) > 0 {
-			// Check if any pod is still executing Init Containers (Data Restore)
-			// We MUST wait for Init to finish before deleting, otherwise data restore is interrupted.
-			for _, pod := range pods.Items {
-				if !isInitFinished(&pod) {
-					log.Info("Waiting for trafficless pod init/restore to finish", "pod", pod.Name, "phase", pod.Status.Phase)
-					return false, nil // Requeue and wait
-				}
-			}
-
 			allClean = false
 			log.Info("Found trafficless pods to cleanup", "count", len(pods.Items), "namespace", targetNs)
 			for _, pod := range pods.Items {
-				log.Info("Deleting trafficless pod", "pod", pod.Name, "namespace", targetNs)
+				log.Info("Deleting trafficless pod", "pod", pod.Name, "namespace", targetNs, "phase", pod.Status.Phase)
 				if err := remoteClient.Delete(ctx, &pod); err != nil {
 					if !errors.IsNotFound(err) {
 						log.Error(err, "Failed to delete trafficless pod", "pod", pod.Name)
@@ -4379,38 +4370,6 @@ func (r *DisasterOperationReconciler) cleanupTrafficlessPods(ctx context.Context
 	}
 
 	return true, nil
-}
-
-// isInitFinished 检查 Pod 的 Init 容器是否全部完成
-func isInitFinished(pod *corev1.Pod) bool {
-	// If Succeeded or Failed, Init is definitely finished
-	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-		return true
-	}
-	// If Pending, Init not started or pending
-	if pod.Status.Phase == corev1.PodPending {
-		return false
-	}
-	// If Running, check InitStatuses
-	// Note: When Pod is Running, all Init Containers must have completed successfully.
-	// Because Pod transitions to Running only after Init containers exit 0.
-	// Exception: If restartPolicy is Always, Init containers might restart? No, Init containers run to completion.
-	// Sidecar containers in Init? (KEP-753). If using sidecar containers, they might be Running.
-	// But standard Init containers are Terminated.
-
-	// Let's double check InitStatuses just to be safe (e.g. during PodInitializing state which is part of Pending/Running transition)
-	for _, status := range pod.Status.InitContainerStatuses {
-		// If using SidecarContainers feature (k8s 1.28+), restartable init containers might be running.
-		// But for data restore, usually it's run-to-completion.
-		// If state is Terminated, it's done.
-		if status.State.Terminated == nil {
-			// If it's a sidecar (RestartPolicy=Always), it might be valid.
-			// But assuming standard restore init container.
-			// If not Terminated, it's running/waiting.
-			return false
-		}
-	}
-	return true
 }
 
 // syncStatistics 按统计规范更新 DisasterOperation 关联的 BackupRestoreStatistics CR
