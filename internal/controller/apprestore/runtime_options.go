@@ -11,6 +11,8 @@ import (
 type RestoreRuntimeConfig struct {
 	RestoreInProgressMaxWaitDefault time.Duration
 	RestoreUnknownMaxWaitDefault    time.Duration
+	RestoreInProgressPollInterval   time.Duration
+	RestoreUnknownPollInterval      time.Duration
 	ProgressCompleteGrace           time.Duration
 	StartupGrace                    time.Duration
 	MissingGrace                    time.Duration
@@ -37,6 +39,8 @@ func defaultRestoreRuntimeConfig() RestoreRuntimeConfig {
 	return RestoreRuntimeConfig{
 		RestoreInProgressMaxWaitDefault: RestorePhaseInProgressMaxWait,
 		RestoreUnknownMaxWaitDefault:    RestorePhaseUnknownMaxWait,
+		RestoreInProgressPollInterval:   RestorePhaseInProgressWaitSeconds,
+		RestoreUnknownPollInterval:      RestorePhaseUnknownWaitSeconds,
 		ProgressCompleteGrace:           5 * time.Minute,
 		StartupGrace:                    5 * time.Minute,
 		MissingGrace:                    90 * time.Second,
@@ -113,6 +117,12 @@ func NewRestoreRuntimeConfig(opts ...RestoreRuntimeOption) RestoreRuntimeConfig 
 	if cfg.RestoreUnknownMaxWaitDefault <= 0 {
 		cfg.RestoreUnknownMaxWaitDefault = defaultRestoreRuntimeConfig().RestoreUnknownMaxWaitDefault
 	}
+	if cfg.RestoreInProgressPollInterval <= 0 {
+		cfg.RestoreInProgressPollInterval = defaultRestoreRuntimeConfig().RestoreInProgressPollInterval
+	}
+	if cfg.RestoreUnknownPollInterval <= 0 {
+		cfg.RestoreUnknownPollInterval = defaultRestoreRuntimeConfig().RestoreUnknownPollInterval
+	}
 	return cfg
 }
 
@@ -125,6 +135,18 @@ func WithRestoreInProgressMaxWaitDefault(v time.Duration) RestoreRuntimeOption {
 func WithRestoreUnknownMaxWaitDefault(v time.Duration) RestoreRuntimeOption {
 	return func(cfg *RestoreRuntimeConfig) {
 		cfg.RestoreUnknownMaxWaitDefault = v
+	}
+}
+
+func WithRestoreInProgressPollInterval(v time.Duration) RestoreRuntimeOption {
+	return func(cfg *RestoreRuntimeConfig) {
+		cfg.RestoreInProgressPollInterval = v
+	}
+}
+
+func WithRestoreUnknownPollInterval(v time.Duration) RestoreRuntimeOption {
+	return func(cfg *RestoreRuntimeConfig) {
+		cfg.RestoreUnknownPollInterval = v
 	}
 }
 

@@ -1,0 +1,51 @@
+apiVersion: testudo.softcdata.com/v1
+kind: OperatorRuntimeConfig
+metadata:
+  name: default
+  namespace: disaster-system
+spec:
+  backupRuntime:
+    inProgressMaxWait: 2h
+    unknownMaxWait: 10m
+    pollInterval: 10s
+  restoreRuntime:
+    inProgressMaxWait: 1h
+    unknownMaxWait: 1h
+    inProgressPollInterval: 5s
+    unknownPollInterval: 10s
+    progressCompleteGrace: 5m
+    startupGrace: 5m
+    missingGrace: 90s
+    emptyStatusGrace: 5m
+    podVolumeRestorePendingMaxWait: 10m
+    retryBackoff: 15s
+    retryLimit: 1
+    retryLimitProgress: 1
+    retryLimitStartup: 1
+    retryLimitMissing: 2
+    retryLimitEmpty: 2
+  operationRuntime:
+    defaultTimeoutMinutes: 60
+    stepStartRequeue: 1s
+    stepRunningRequeue: 5s
+    defaultRetryInterval: 5s
+  instanceRuntime:
+    transitionWatchdogTimeout: 2m
+    minTransitionWatchdogTimeout: 30s
+    initializingRequeue: 10s
+    steadyRequeue: 60s
+    failedRequeue: 60s
+  syncRuntime:
+    schedulerUpdateTimeout: 30s
+    backupObserveRequeue: 2s
+    backupInProgressRequeue: 5s
+    historyMissingRequeue: 5s
+    restoreObserveRequeue: 10s
+    historyRetention: 20
+  storageRuntime:
+    requeueInterval: 10s
+  clusterRuntime:
+    reconcileInterval: 1m
+    deletionRetryInterval: 10s
+    veleroInstallTimeout: 10m
+    veleroZombieLockThreshold: 10m

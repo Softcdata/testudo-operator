@@ -234,7 +234,7 @@ var _ = Describe("AppRestore Coverage Expansion", func() {
 			Expect(updated.Annotations["testudo.softcdata.com/app-restore-missing-since"]).NotTo(BeEmpty())
 		})
 
-		It("should fail if Get Velero Restore returns non-NotFound error", func() {
+		It("should keep Restoring if Get Velero Restore returns transient non-NotFound error", func() {
 			appRestore = &disasterv1.AppRestore{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-restore-get-error", Namespace: ns, Finalizers: []string{LabelAppRestoreFinalizer}},
 				Spec:       disasterv1.AppRestoreSpec{Cluster: "target-cluster"},
@@ -246,14 +246,18 @@ var _ = Describe("AppRestore Coverage Expansion", func() {
 			// Mock Get to return error
 			mockClient.MockGet = func(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 				if _, ok := obj.(*velerov1.Restore); ok {
-					return fmt.Errorf("unexpected error getting restore")
+					return fmt.Errorf("the server was unable to return a response in the time allotted")
 				}
 				return k8sClient.Get(ctx, key, obj, opts...)
 			}
 
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: appRestore.Name, Namespace: appRestore.Namespace}})
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("unexpected error getting restore"))
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: appRestore.Name, Namespace: appRestore.Namespace}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+			updated := &disasterv1.AppRestore{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: appRestore.Name, Namespace: appRestore.Namespace}, updated)).To(Succeed())
+			Expect(updated.Status.Status).To(Equal(disasterv1.PhaseRestoring))
 		})
 
 		It("should transition to Failed when Velero restore phase is Failed", func() {

@@ -20,6 +20,7 @@ resources:
 - bases/testudo.softcdata.com_disasteroperations.yaml
 - bases/testudo.softcdata.com_disastergroups.yaml
 - bases/testudo.softcdata.com_disasterdrills.yaml
+- bases/testudo.softcdata.com_operatorruntimeconfigs.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 # patches:

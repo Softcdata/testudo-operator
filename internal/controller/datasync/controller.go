@@ -21,7 +21,9 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
-	"reflect"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -38,6 +40,7 @@ import (
 
 	ctrlcommon "github.com/softcdata/testudo-operator/internal/controller"
 	restorebuilder "github.com/softcdata/testudo-operator/internal/controller/restore"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	"github.com/softcdata/testudo-operator/internal/controller/scheduler"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	"github.com/softcdata/testudo-operator/pkg/helper"
@@ -48,6 +51,8 @@ const (
 	dataSyncFinalizer = "testudo.softcdata.com/datasync-finalizer"
 	AnnotationTraceID = metadata.AnnotationTraceID
 	TraceIDKey        = metadata.TraceIDKey
+
+	appBackupParallelFilesUploadEnv = "APPBACKUP_PARALLEL_FILES_UPLOAD"
 
 	dataSyncReasonBackupFailed       = "BackupFailed"
 	dataSyncReasonBuildRestoreFailed = "BuildRestoreSpecFailed"
@@ -279,7 +284,7 @@ func (r *DataSyncReconciler) triggerSync(namespace, name string) {
 	log.Info("Cron 触发同步")
 
 	// 更新手动触发时间戳以触发调谐
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runtimecfg.SnapshotCurrent().SyncRuntime.SchedulerUpdateTimeout)
 	defer cancel()
 
 	dataSync := &disasterv1.DataSync{}
@@ -433,21 +438,22 @@ func (r *DataSyncReconciler) executeSync(ctx context.Context, log logr.Logger, d
 		return r.failDataSync(ctx, dataSync, clusterPair, dataSyncReasonDependencyFailed, msg)
 	}
 
-	// 如果 LastBackupName 为空，说明需要确定或等待本次备份
-	if dataSync.Status.LastBackupName == "" {
-		// 对齐 desired spec/template 后再确定或触发本次备份。
-		// 这同时覆盖反向保护后的 source cluster 变化，以及实例 veleroHooks 更新后的 Template.Hooks 变化。
-		desiredBackupSpec := r.buildAppBackupSpec(instance, config)
-		if appBackup.Spec.Cluster != desiredBackupSpec.Cluster || !reflect.DeepEqual(appBackup.Spec.Template, desiredBackupSpec.Template) {
-			log.Info("更新 DataSync AppBackup desired template", "oldCluster", appBackup.Spec.Cluster, "newCluster", desiredBackupSpec.Cluster)
-			appBackup.Spec.Cluster = desiredBackupSpec.Cluster
-			appBackup.Spec.Template = desiredBackupSpec.Template
-			if err := r.Update(ctx, appBackup); err != nil {
-				return ctrl.Result{}, err
-			}
+	desiredBackupSpec := r.buildAppBackupSpec(instance, config)
+	if ctrlcommon.AppBackupSpecNeedsUpdate(appBackup.Spec, desiredBackupSpec) {
+		log.Info("更新 DataSync AppBackup 规格", "oldCluster", appBackup.Spec.Cluster, "newCluster", desiredBackupSpec.Cluster)
+		appBackup.Spec.Cluster = desiredBackupSpec.Cluster
+		appBackup.Spec.Template = desiredBackupSpec.Template
+		appBackup.Spec.Timeout = desiredBackupSpec.Timeout
+		if err := r.Update(ctx, appBackup); err != nil {
+			return ctrl.Result{}, err
+		}
+		if dataSync.Status.LastBackupName == "" {
 			return ctrl.Result{Requeue: true}, nil
 		}
+	}
 
+	// 如果 LastBackupName 为空，说明需要确定或等待本次备份
+	if dataSync.Status.LastBackupName == "" {
 		if backupName, ok := ctrlcommon.CurrentBackupActionVeleroBackupName(appBackupName, appBackup, dataSync.Status.LastSyncTime); ok {
 			if rec, found := ctrlcommon.FindBackupRecordByName(appBackup.Status.History, backupName); found {
 				log.Info("找到本次 Action 生成的 Velero Backup", "name", rec.Name)
@@ -465,7 +471,7 @@ func (r *DataSyncReconciler) executeSync(ctx context.Context, log logr.Logger, d
 				helper.SetConditionError(&dataSync.Status.Conditions, "BackupFailed", dataSyncReasonBackupFailed, failMsg)
 				return r.failDataSync(ctx, dataSync, clusterPair, dataSyncReasonBackupFailed, failMsg)
 			}
-			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: runtimecfg.SnapshotCurrent().SyncRuntime.BackupObserveRequeue}, nil
 		}
 
 		// 1. 兼容旧状态：没有可关联的 Backup Action 时，只按上次完成时间之后的历史记录兜底。
@@ -528,7 +534,7 @@ func (r *DataSyncReconciler) executeSync(ctx context.Context, log logr.Logger, d
 
 		if !found {
 			// 可能 AppBackup 还没同步到 History
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: runtimecfg.SnapshotCurrent().SyncRuntime.HistoryMissingRequeue}, nil
 		}
 
 		if backupStatus == string(velerov1.BackupPhaseCompleted) {
@@ -555,7 +561,7 @@ func (r *DataSyncReconciler) executeSync(ctx context.Context, log logr.Logger, d
 		}
 
 		// InProgress
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: runtimecfg.SnapshotCurrent().SyncRuntime.BackupInProgressRequeue}, nil
 	}
 
 }
@@ -647,8 +653,8 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 					failedRecord.Duration = now.Sub(startTime.Time).String()
 				}
 				dataSync.Status.History = append(dataSync.Status.History, failedRecord)
-				if len(dataSync.Status.History) > 20 {
-					dataSync.Status.History = dataSync.Status.History[len(dataSync.Status.History)-20:]
+				if retention := runtimecfg.SnapshotCurrent().SyncRuntime.HistoryRetention; len(dataSync.Status.History) > retention {
+					dataSync.Status.History = dataSync.Status.History[len(dataSync.Status.History)-retention:]
 				}
 
 				if err := r.Status().Update(ctx, dataSync); err != nil {
@@ -766,8 +772,8 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 			}
 
 			dataSync.Status.History = append(dataSync.Status.History, record)
-			if len(dataSync.Status.History) > 20 {
-				dataSync.Status.History = dataSync.Status.History[len(dataSync.Status.History)-20:]
+			if retention := runtimecfg.SnapshotCurrent().SyncRuntime.HistoryRetention; len(dataSync.Status.History) > retention {
+				dataSync.Status.History = dataSync.Status.History[len(dataSync.Status.History)-retention:]
 			}
 		}
 
@@ -789,7 +795,7 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 		return ctrl.Result{}, nil
 	}
 
-	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: runtimecfg.SnapshotCurrent().SyncRuntime.RestoreObserveRequeue}, nil
 }
 
 // syncStatistics 更新关联的 BackupRestoreStatistics CR
@@ -854,6 +860,7 @@ func (r *DataSyncReconciler) buildAppBackupSpec(instance *disasterv1.DisasterIns
 	trueVar := true
 	spec := disasterv1.AppBackupSpec{
 		Cluster: source,
+		Timeout: ctrlcommon.ResolveAppBackupTimeout(instance),
 		// DisasterPolicy: config.Spec.DataSyncPolicy, // V2 does not use V1 DisasterPolicy
 		Template: velerov1.BackupSpec{
 			IncludedNamespaces:       instance.Spec.Namespaces,
@@ -865,10 +872,25 @@ func (r *DataSyncReconciler) buildAppBackupSpec(instance *disasterv1.DisasterIns
 			DefaultVolumesToFsBackup: &trueVar,
 		},
 	}
+	if uploaderConfig := resolveDataSyncBackupUploaderConfig(); uploaderConfig != nil {
+		spec.Template.UploaderConfig = uploaderConfig
+	}
 	if hooks := dataBackupHooks(instance); hooks != nil {
 		spec.Template.Hooks = *hooks
 	}
 	return spec
+}
+
+func resolveDataSyncBackupUploaderConfig() *velerov1.UploaderConfigForBackup {
+	raw := strings.TrimSpace(os.Getenv(appBackupParallelFilesUploadEnv))
+	if raw == "" {
+		return nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return nil
+	}
+	return &velerov1.UploaderConfigForBackup{ParallelFilesUpload: value}
 }
 
 // buildAppRestoreSpec 构建 AppRestore 的 Spec (包含 Trafficless 配置)

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -114,5 +115,33 @@ func TestAppendResourceSyncHistory_UpsertsExistingCycle(t *testing.T) {
 	}
 	if record.CompletionTime == nil || !record.CompletionTime.Equal(&laterCompletion) {
 		t.Fatalf("expected completion time to be updated")
+	}
+}
+
+func TestAppendResourceSyncHistory_UsesRuntimeRetention(t *testing.T) {
+	runtimecfg.ResetForTest()
+	t.Cleanup(runtimecfg.ResetForTest)
+
+	snapshot := runtimecfg.DefaultSnapshot()
+	snapshot.SyncRuntime.HistoryRetention = 2
+	runtimecfg.Activate(snapshot)
+
+	completion := metav1.NewTime(time.Now())
+	rs := &disasterv1.ResourceSync{
+		Status: disasterv1.ResourceSyncStatus{
+			History: []disasterv1.SyncHistoryRecord{
+				{BackupName: "backup-1", RestoreName: "restore-1"},
+				{BackupName: "backup-2", RestoreName: "restore-2"},
+			},
+		},
+	}
+
+	appendResourceSyncHistory(rs, "backup-3", "restore-3", 0, 0, nil, completion, disasterv1.PhaseSucceeded)
+
+	if len(rs.Status.History) != 2 {
+		t.Fatalf("expected runtime retention to keep 2 history records, got %d", len(rs.Status.History))
+	}
+	if rs.Status.History[0].BackupName != "backup-2" || rs.Status.History[1].BackupName != "backup-3" {
+		t.Fatalf("unexpected retained history order: %#v", rs.Status.History)
 	}
 }

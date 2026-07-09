@@ -2,6 +2,8 @@ package apprestore
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +119,145 @@ func TestRestoringHandler_ProgressCompletedStallTriggersAutoRetry(t *testing.T) 
 	}
 	if got := appRestore.Labels[labelAppRestoreRetryProgress]; got != "1" {
 		t.Fatalf("expected progress retry count label to be 1, got %q", got)
+	}
+}
+
+func TestRestoringHandler_GetRestoreTransientErrorKeepsRestoring(t *testing.T) {
+	reconciler, mockTargetClient, mgmtClient := newRestoringConvergenceReconciler(t)
+	appRestore := newRestoringTestAppRestore("apprestore-transient-get-error")
+	appRestore.Status.RestoreStatus = velerov1.RestoreStatus{Phase: velerov1.RestorePhaseInProgress}
+
+	mockTargetClient.MockGet = func(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+		if _, ok := obj.(*velerov1.Restore); ok {
+			return fmt.Errorf("the server was unable to return a response in the time allotted")
+		}
+		return mgmtClient.Get(ctx, key, obj, opts...)
+	}
+
+	handler := &RestoringHandler{}
+	nextPhase, res, err := handler.Handle(context.Background(), reconciler, appRestore)
+	if err != nil {
+		t.Fatalf("RestoringHandler.Handle returned error: %v", err)
+	}
+	if nextPhase != disasterv1.PhaseRestoring {
+		t.Fatalf("expected next phase Restoring, got %q", nextPhase)
+	}
+	if res.RequeueAfter != reconciler.restoreRuntimeConfig().RetryBackoff {
+		t.Fatalf("expected requeueAfter %s, got %s", reconciler.restoreRuntimeConfig().RetryBackoff, res.RequeueAfter)
+	}
+}
+
+func TestIsTransientKubeAPIError_DetectsRestoreConnectionLoss(t *testing.T) {
+	cases := []string{
+		`Get "https://10.10.10.171:6443/apis/velero.io/v1/namespaces/velero/restores/res-a": net/http: TLS handshake timeout`,
+		`Get "https://10.10.10.171:6443/apis/velero.io/v1/namespaces/velero/restores/res-a": http2: client connection lost`,
+		`Get "https://10.10.10.171:6443/apis/velero.io/v1/namespaces/velero/restores/res-a": read tcp 10.0.0.1:12345->10.0.0.2:6443: connection reset by peer`,
+		`Get "https://10.10.10.171:6443/apis/velero.io/v1/namespaces/velero/restores/res-a": unexpected EOF`,
+	}
+	for _, tc := range cases {
+		if !isTransientKubeAPIError(errors.New(tc)) {
+			t.Fatalf("expected transient error for %q", tc)
+		}
+	}
+}
+
+func TestRestoringHandler_GetRestoreNonTransientErrorFails(t *testing.T) {
+	reconciler, mockTargetClient, mgmtClient := newRestoringConvergenceReconciler(t)
+	appRestore := newRestoringTestAppRestore("apprestore-non-transient-get-error")
+	appRestore.Status.RestoreStatus = velerov1.RestoreStatus{Phase: velerov1.RestorePhaseInProgress}
+
+	mockTargetClient.MockGet = func(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+		if _, ok := obj.(*velerov1.Restore); ok {
+			return fmt.Errorf("permission denied")
+		}
+		return mgmtClient.Get(ctx, key, obj, opts...)
+	}
+
+	handler := &RestoringHandler{}
+	nextPhase, _, err := handler.Handle(context.Background(), reconciler, appRestore)
+	if err == nil {
+		t.Fatalf("expected non-transient Get Restore error")
+	}
+	if nextPhase != disasterv1.PhaseFailed {
+		t.Fatalf("expected next phase Failed, got %q", nextPhase)
+	}
+}
+
+func TestRestoringHandler_ProgressCompletedWithActivePVRDoesNotAutoRetry(t *testing.T) {
+	reconciler, mockTargetClient, mgmtClient := newRestoringConvergenceReconciler(t)
+	appRestore := newRestoringTestAppRestore("apprestore-progress-active-pvr")
+	appRestore.Status.RestoreStatus = velerov1.RestoreStatus{Phase: velerov1.RestorePhaseInProgress}
+	restoreName := reconciler.GenRestoreName(appRestore)
+	now := time.Now()
+
+	restore := &velerov1.Restore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              restoreName,
+			Namespace:         controller.VeleroNamespace,
+			CreationTimestamp: metav1.NewTime(now.Add(-10 * time.Minute)),
+		},
+		Status: velerov1.RestoreStatus{
+			Phase:          velerov1.RestorePhaseInProgress,
+			StartTimestamp: &metav1.Time{Time: now.Add(-9 * time.Minute)},
+			Progress: &velerov1.RestoreProgress{
+				TotalItems:    14,
+				ItemsRestored: 14,
+			},
+		},
+	}
+	pvr := &velerov1.PodVolumeRestore{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "active-pvr",
+			Namespace: controller.VeleroNamespace,
+			Labels: map[string]string{
+				velerov1.RestoreNameLabel: restoreName,
+			},
+		},
+		Status: velerov1.PodVolumeRestoreStatus{
+			Phase: velerov1.PodVolumeRestorePhaseInProgress,
+		},
+	}
+
+	mockTargetClient.MockGet = func(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+		if target, ok := obj.(*velerov1.Restore); ok {
+			restore.DeepCopyInto(target)
+			return nil
+		}
+		return mgmtClient.Get(ctx, key, obj, opts...)
+	}
+	mockTargetClient.MockList = func(ctx context.Context, list ctrlclient.ObjectList, opts ...ctrlclient.ListOption) error {
+		if pvrList, ok := list.(*velerov1.PodVolumeRestoreList); ok {
+			pvrList.Items = []velerov1.PodVolumeRestore{*pvr}
+			return nil
+		}
+		return mgmtClient.List(ctx, list, opts...)
+	}
+
+	deleteCalled := 0
+	mockTargetClient.MockDelete = func(ctx context.Context, obj ctrlclient.Object, opts ...ctrlclient.DeleteOption) error {
+		if _, ok := obj.(*velerov1.Restore); ok {
+			deleteCalled++
+			return nil
+		}
+		return mgmtClient.Delete(ctx, obj, opts...)
+	}
+
+	handler := &RestoringHandler{}
+	nextPhase, res, err := handler.Handle(context.Background(), reconciler, appRestore)
+	if err != nil {
+		t.Fatalf("RestoringHandler.Handle returned error: %v", err)
+	}
+	if nextPhase != disasterv1.PhaseRestoring {
+		t.Fatalf("expected next phase Restoring, got %q", nextPhase)
+	}
+	if res.RequeueAfter != controller.RestorePhaseInProgressWaitSeconds {
+		t.Fatalf("expected regular in-progress requeue, got %s", res.RequeueAfter)
+	}
+	if deleteCalled != 0 {
+		t.Fatalf("expected restore not to be deleted while PVR is active, got %d", deleteCalled)
+	}
+	if got := appRestore.Labels[labelAppRestoreRetryProgress]; got != "" {
+		t.Fatalf("expected no progress retry count label, got %q", got)
 	}
 }
 

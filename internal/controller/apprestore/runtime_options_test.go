@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/softcdata/testudo-operator/internal/controller"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 )
 
 func TestNewRestoreRuntimeConfig_Defaults(t *testing.T) {
@@ -15,6 +16,12 @@ func TestNewRestoreRuntimeConfig_Defaults(t *testing.T) {
 	}
 	if cfg.RestoreUnknownMaxWaitDefault != RestorePhaseUnknownMaxWait {
 		t.Fatalf("unexpected RestoreUnknownMaxWaitDefault: %s", cfg.RestoreUnknownMaxWaitDefault)
+	}
+	if cfg.RestoreInProgressPollInterval != RestorePhaseInProgressWaitSeconds {
+		t.Fatalf("unexpected RestoreInProgressPollInterval: %s", cfg.RestoreInProgressPollInterval)
+	}
+	if cfg.RestoreUnknownPollInterval != RestorePhaseUnknownWaitSeconds {
+		t.Fatalf("unexpected RestoreUnknownPollInterval: %s", cfg.RestoreUnknownPollInterval)
 	}
 	if cfg.ProgressCompleteGrace != 5*time.Minute {
 		t.Fatalf("unexpected ProgressCompleteGrace: %s", cfg.ProgressCompleteGrace)
@@ -55,6 +62,8 @@ func TestNewRestoreRuntimeConfig_WithOptions(t *testing.T) {
 	cfg := NewRestoreRuntimeConfig(
 		WithRestoreInProgressMaxWaitDefault(30*time.Minute),
 		WithRestoreUnknownMaxWaitDefault(45*time.Minute),
+		WithRestoreInProgressPollInterval(7*time.Second),
+		WithRestoreUnknownPollInterval(11*time.Second),
 		WithProgressCompleteGrace(2*time.Minute),
 		WithStartupGrace(3*time.Minute),
 		WithMissingGrace(100*time.Second),
@@ -73,6 +82,12 @@ func TestNewRestoreRuntimeConfig_WithOptions(t *testing.T) {
 	}
 	if cfg.RestoreUnknownMaxWaitDefault != 45*time.Minute {
 		t.Fatalf("unexpected RestoreUnknownMaxWaitDefault: %s", cfg.RestoreUnknownMaxWaitDefault)
+	}
+	if cfg.RestoreInProgressPollInterval != 7*time.Second {
+		t.Fatalf("unexpected RestoreInProgressPollInterval: %s", cfg.RestoreInProgressPollInterval)
+	}
+	if cfg.RestoreUnknownPollInterval != 11*time.Second {
+		t.Fatalf("unexpected RestoreUnknownPollInterval: %s", cfg.RestoreUnknownPollInterval)
 	}
 	if cfg.ProgressCompleteGrace != 2*time.Minute {
 		t.Fatalf("unexpected ProgressCompleteGrace: %s", cfg.ProgressCompleteGrace)
@@ -113,6 +128,8 @@ func TestNewRestoreRuntimeConfig_InvalidValuesFallback(t *testing.T) {
 	cfg := NewRestoreRuntimeConfig(
 		WithRestoreInProgressMaxWaitDefault(0),
 		WithRestoreUnknownMaxWaitDefault(0),
+		WithRestoreInProgressPollInterval(0),
+		WithRestoreUnknownPollInterval(0),
 		WithProgressCompleteGrace(0),
 		WithStartupGrace(0),
 		WithMissingGrace(0),
@@ -131,6 +148,12 @@ func TestNewRestoreRuntimeConfig_InvalidValuesFallback(t *testing.T) {
 	}
 	if cfg.RestoreUnknownMaxWaitDefault != RestorePhaseUnknownMaxWait {
 		t.Fatalf("expected RestoreUnknownMaxWaitDefault fallback, got %s", cfg.RestoreUnknownMaxWaitDefault)
+	}
+	if cfg.RestoreInProgressPollInterval != RestorePhaseInProgressWaitSeconds {
+		t.Fatalf("expected RestoreInProgressPollInterval fallback, got %s", cfg.RestoreInProgressPollInterval)
+	}
+	if cfg.RestoreUnknownPollInterval != RestorePhaseUnknownWaitSeconds {
+		t.Fatalf("expected RestoreUnknownPollInterval fallback, got %s", cfg.RestoreUnknownPollInterval)
 	}
 	if cfg.ProgressCompleteGrace != 5*time.Minute {
 		t.Fatalf("expected ProgressCompleteGrace fallback, got %s", cfg.ProgressCompleteGrace)
@@ -164,6 +187,31 @@ func TestNewRestoreRuntimeConfig_InvalidValuesFallback(t *testing.T) {
 	}
 	if cfg.AutoRetryLimitEmpty != 0 {
 		t.Fatalf("expected non-negative AutoRetryLimitEmpty fallback to 0, got %d", cfg.AutoRetryLimitEmpty)
+	}
+}
+
+func TestAppRestoreReconcilerRuntimeConfigUsesActiveSnapshot(t *testing.T) {
+	runtimecfg.ResetForTest()
+	t.Cleanup(runtimecfg.ResetForTest)
+
+	snapshot := runtimecfg.DefaultSnapshot()
+	snapshot.RestoreRuntime.RetryBackoff = 42 * time.Second
+	snapshot.RestoreRuntime.InProgressPollInterval = 9 * time.Second
+	runtimecfg.SetStartupDefaults(snapshot)
+
+	reconciler := &AppRestoreReconciler{
+		restoreRuntimeOptions: []RestoreRuntimeOption{
+			WithRetryBackoff(3 * time.Second),
+			WithRestoreInProgressPollInterval(4 * time.Second),
+		},
+	}
+
+	cfg := reconciler.restoreRuntimeConfig()
+	if cfg.RetryBackoff != 42*time.Second {
+		t.Fatalf("expected active snapshot RetryBackoff, got %s", cfg.RetryBackoff)
+	}
+	if cfg.RestoreInProgressPollInterval != 9*time.Second {
+		t.Fatalf("expected active snapshot RestoreInProgressPollInterval, got %s", cfg.RestoreInProgressPollInterval)
 	}
 }
 

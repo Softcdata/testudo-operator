@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -217,13 +218,14 @@ func CleanupZombieHelmLocks(ctx context.Context, cli client.Client, namespace st
 		}
 
 		// 检查这个锁是否足够老以被认为是僵尸锁
+		threshold := runtimecfg.SnapshotCurrent().ClusterRuntime.VeleroZombieLockThreshold
 		age := time.Since(secret.CreationTimestamp.Time)
-		if age < ZombieLockThreshold {
+		if age < threshold {
 			logger.Info("Found pending Helm release but it's recent, skipping",
 				"secret", secret.Name,
 				"status", status,
 				"age", age.String(),
-				"threshold", ZombieLockThreshold.String())
+				"threshold", threshold.String())
 			continue
 		}
 

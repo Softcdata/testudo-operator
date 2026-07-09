@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"time"
 
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	"github.com/softcdata/testudo-operator/pkg/tools"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
@@ -53,6 +55,30 @@ func ManagementNamespace() string {
 		return namespace
 	}
 	return DefaultManagementNamespace
+}
+
+// ResolveAppBackupTimeout converts instance-level timeout minutes into an AppBackup timeout.
+// A nil result preserves the built-in AppBackup timeout fallback behavior.
+func ResolveAppBackupTimeout(instance *disasterv1.DisasterInstance) *metav1.Duration {
+	if instance == nil || instance.Spec.OperationTimeoutMinutes <= 0 {
+		return nil
+	}
+	return &metav1.Duration{Duration: time.Duration(instance.Spec.OperationTimeoutMinutes) * time.Minute}
+}
+
+// AppBackupSpecNeedsUpdate reports whether the existing AppBackup spec diverges from the desired
+// cluster/template/timeout contract that DataSync and ResourceSync manage.
+func AppBackupSpecNeedsUpdate(current, desired disasterv1.AppBackupSpec) bool {
+	if current.Cluster != desired.Cluster {
+		return true
+	}
+	if !reflect.DeepEqual(current.Template, desired.Template) {
+		return true
+	}
+	if !reflect.DeepEqual(current.Timeout, desired.Timeout) {
+		return true
+	}
+	return false
 }
 
 // GetKubeClientSet 获取 kube client

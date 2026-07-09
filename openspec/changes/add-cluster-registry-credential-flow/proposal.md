@@ -14,13 +14,15 @@
 - `Cluster` 新增独立的 `spec.veleroInstall`（命名以实施为准）用于描述 Velero 安装镜像配置。
 - 对外输入模型收敛为：
   - `imageRegistry`：非敏感，可选，例如 `harbor.customer.local/disaster`
-  - `username`：write-only，可选
+  - `username`：可选；写入时参与生成 Secret，查询时可脱敏回显用于编辑提示
   - `password`：write-only，可选
   - `removeCredential`：write-only，可选
 - `Cluster` 持久化时只保留非敏感字段：
   - `imageRegistry`
   - `registryCredentialSecretRef`
 - 凭据明文不得写入 `Cluster` CR。
+- 编辑集群时，未携带 `password` 或携带空 `password` 必须表示“保持已有凭据不变”，不得因为前端无法回填密码而清空或覆盖 Secret。
+- 只有显式提交非空 `username/password` 才表示轮换凭据；只有 `removeCredential=true` 才表示删除凭据。
 
 ### 2. 添加集群时先准备拉取凭据，再推进 Helm 安装
 - server 在 cluster create/update 时，根据用户提交的 registry 账号密码生成或轮换管理平面 `kubernetes.io/dockerconfigjson` Secret。
@@ -48,6 +50,7 @@
 - 创建集群：若存在自定义镜像源和凭据，先确保远端 pull secret 可用，再推进安装。
 - 轮换凭据：更新管理平面 Secret 后，reconcile 必须对齐远端 Secret 并重新执行安装对齐。
 - 删除凭据：必须移除 Helm values 中的 `imagePullSecrets` 引用，并清理远端 Secret。
+- 保留凭据：编辑集群但未提交 `password` 或提交空 `password` 时，server 必须保留管理平面 Secret 引用；operator 必须继续同步并引用既有 target pull secret。
 - 删除集群：必须清理远端 pull secret，避免在目标集群遗留孤儿凭据。
 
 ### 6. 首期 E2E 采用轻量认证 registry，不引入 Harbor
@@ -55,6 +58,7 @@
 - E2E 从 `disaster-server` 的 cluster create/patch API 发起，贯穿 `Cluster` CR、管理平面 dockerconfigjson Secret、target-cluster pull secret、Helm install/upgrade。
 - 首批纳入主验收的场景：
   - 创建集群时携带 `veleroInstall.imageRegistry + username/password`
+  - 编辑集群时只修改 `veleroInstall.imageRegistry` 或其他字段，不携带密码，验证凭据不被覆盖
   - 编辑集群时轮换凭据
   - 编辑集群时显式删除凭据
 - 需要验证的核心事实：

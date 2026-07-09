@@ -516,6 +516,151 @@ var _ = Describe("DataSync Controller", func() {
 			Expect(updated.Status.Message).To(ContainSubstring("did not report a Velero phase"))
 		})
 
+		It("应该将实例级操作超时投递到 AppBackup", func() {
+			config := &disasterv1.DisasterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "default"},
+				Spec: disasterv1.DisasterConfigSpec{
+					SourceCluster:     "cluster-A",
+					TargetCluster:     "cluster-B",
+					StorageRepository: "good-sr",
+				},
+			}
+			instance := &disasterv1.DisasterInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-instance", Namespace: "default"},
+				Spec: disasterv1.DisasterInstanceSpec{
+					Config:                  "test-config",
+					Namespaces:              []string{"app-ns"},
+					OperationTimeoutMinutes: 180,
+				},
+			}
+			dataSync := &disasterv1.DataSync{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-ds",
+					Namespace:  "default",
+					Finalizers: []string{"testudo.softcdata.com/datasync-finalizer"},
+				},
+				Spec: disasterv1.DataSyncSpec{
+					Instance: "test-instance",
+					Trigger:  disasterv1.TriggerSpec{Schedule: "*/1 * * * *"},
+				},
+				Status: disasterv1.DataSyncStatus{
+					State: disasterv1.DataSyncStateInProgress,
+				},
+			}
+			storage := &disasterv1.StorageRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: "good-sr", Namespace: "disaster-system"},
+				Status: disasterv1.StorageRepositoryStatus{
+					Status: disasterv1.StorageRepositoryStatusAvailable,
+				},
+			}
+
+			fakeClient = fake.NewClientBuilder().
+				WithScheme(s).
+				WithObjects(dataSync, instance, config, storage).
+				WithStatusSubresource(dataSync).
+				Build()
+
+			r = &DataSyncReconciler{
+				Client:    fakeClient,
+				Scheme:    s,
+				Log:       ctrl.Log.WithName("test"),
+				Recorder:  recorder,
+				Scheduler: syncScheduler,
+			}
+
+			_, err := r.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "test-ds", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			backup := &disasterv1.AppBackup{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "ds-test-ds", Namespace: "default"}, backup)).To(Succeed())
+			Expect(backup.Spec.Timeout).NotTo(BeNil())
+			Expect(backup.Spec.Timeout.Duration).To(Equal(180 * time.Minute))
+		})
+
+		It("当备份已在进行中时也应该同步新的实例级操作超时到 AppBackup", func() {
+			config := &disasterv1.DisasterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "default"},
+				Spec: disasterv1.DisasterConfigSpec{
+					SourceCluster:     "cluster-A",
+					TargetCluster:     "cluster-B",
+					StorageRepository: "good-sr",
+				},
+			}
+			instance := &disasterv1.DisasterInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-instance", Namespace: "default"},
+				Spec: disasterv1.DisasterInstanceSpec{
+					Config:                  "test-config",
+					Namespaces:              []string{"app-ns"},
+					OperationTimeoutMinutes: 180,
+				},
+			}
+			dataSync := &disasterv1.DataSync{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-ds",
+					Namespace:  "default",
+					Finalizers: []string{"testudo.softcdata.com/datasync-finalizer"},
+				},
+				Spec: disasterv1.DataSyncSpec{
+					Instance: "test-instance",
+					Trigger:  disasterv1.TriggerSpec{Schedule: "*/1 * * * *"},
+				},
+				Status: disasterv1.DataSyncStatus{
+					State:          disasterv1.DataSyncStateInProgress,
+					LastBackupName: "bak-ds-test-ds-old",
+				},
+			}
+			appBackup := &disasterv1.AppBackup{
+				ObjectMeta: metav1.ObjectMeta{Name: "ds-test-ds", Namespace: "default"},
+				Spec: disasterv1.AppBackupSpec{
+					Cluster: "cluster-A",
+					Template: velerov1.BackupSpec{
+						IncludedNamespaces: []string{"app-ns"},
+					},
+					Timeout: &metav1.Duration{Duration: time.Hour},
+				},
+				Status: disasterv1.AppBackupStatus{
+					History: []disasterv1.BackupRecord{
+						{
+							Name:  "bak-ds-test-ds-old",
+							Phase: string(velerov1.BackupPhaseInProgress),
+						},
+					},
+				},
+			}
+			storage := &disasterv1.StorageRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: "good-sr", Namespace: "disaster-system"},
+				Status: disasterv1.StorageRepositoryStatus{
+					Status: disasterv1.StorageRepositoryStatusAvailable,
+				},
+			}
+
+			fakeClient = fake.NewClientBuilder().
+				WithScheme(s).
+				WithObjects(dataSync, instance, config, appBackup, storage).
+				WithStatusSubresource(dataSync).
+				Build()
+
+			r = &DataSyncReconciler{
+				Client:    fakeClient,
+				Scheme:    s,
+				Log:       ctrl.Log.WithName("test"),
+				Recorder:  recorder,
+				Scheduler: syncScheduler,
+			}
+
+			_, err := r.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "test-ds", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedBackup := &disasterv1.AppBackup{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "ds-test-ds", Namespace: "default"}, updatedBackup)).To(Succeed())
+			Expect(updatedBackup.Spec.Timeout).NotTo(BeNil())
+			Expect(updatedBackup.Spec.Timeout.Duration).To(Equal(180 * time.Minute))
+		})
+
 		It("当 StorageRepository 不可用时应该直接失败并发射 Finished 事件", func() {
 			config := &disasterv1.DisasterConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "default"},

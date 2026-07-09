@@ -32,6 +32,7 @@ import (
 	"time"
 
 	semver "github.com/blang/semver/v4"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	"github.com/softcdata/testudo-operator/pkg/helper"
 	platformlicense "github.com/softcdata/testudo-operator/pkg/license"
@@ -82,6 +83,18 @@ var requiredVeleroCRDNames = []string{
 	"restores.velero.io",
 	"serverstatusrequests.velero.io",
 	"backupstoragelocations.velero.io",
+}
+
+func clusterReconcileInterval() time.Duration {
+	return runtimecfg.SnapshotCurrent().ClusterRuntime.ReconcileInterval
+}
+
+func clusterDeletionRetryInterval() time.Duration {
+	return runtimecfg.SnapshotCurrent().ClusterRuntime.DeletionRetryInterval
+}
+
+func clusterVeleroInstallTimeout() string {
+	return runtimecfg.SnapshotCurrent().ClusterRuntime.VeleroInstallTimeout.String()
 }
 
 // ClusterReconciler reconciles a Cluster object
@@ -468,7 +481,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 	if !licenseAccepted {
-		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+		return ctrl.Result{RequeueAfter: clusterReconcileInterval()}, nil
 	}
 
 	// Check Token Expiration
@@ -566,7 +579,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 					return ctrl.Result{}, updateErr
 				}
 				// Keep periodic checks alive even after processing one-shot ensure-storage signal.
-				return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+				return ctrl.Result{RequeueAfter: clusterReconcileInterval()}, nil
 			}
 			return ctrl.Result{}, err
 		}
@@ -586,7 +599,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 		logger.Info("Successfully processed ensure-storage signal", "storage", storageName, "sourceCluster", sourceCluster, "bslCluster", bslClusterName)
 		// Continue periodic health/stats checks after one-shot ensure-storage handling.
-		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+		return ctrl.Result{RequeueAfter: clusterReconcileInterval()}, nil
 	}
 
 	logger.Info("Checking if Velero is installed")
@@ -756,7 +769,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		logger.Error(err, "failed to process refresh-cluster-stats signal")
 		return ctrl.Result{}, err
 	} else if handled {
-		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+		return ctrl.Result{RequeueAfter: clusterReconcileInterval()}, nil
 	}
 
 	// Collect Stats
@@ -780,7 +793,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+	return ctrl.Result{RequeueAfter: clusterReconcileInterval()}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -1648,7 +1661,7 @@ func (r *ClusterReconciler) InstallVeleroInCluster(ctx context.Context, cluster 
 		"--create-namespace",
 		"--cleanup-on-fail",
 		"--no-hooks", // 跳过 CRD 安装 Hook，因为已手动安装
-		"--timeout", "10m",
+		"--timeout", clusterVeleroInstallTimeout(),
 		"-n", VeleroNamespace,
 		"-f", valuesPath,
 		"--kubeconfig", kubeconfigPath,
@@ -1793,7 +1806,7 @@ func (r *ClusterReconciler) handleDelete(ctx context.Context, cluster *disasterv
 			cluster.Status.Message = err.Error()
 			helper.ReportDiagnosticEvent(r.Recorder, cluster, corev1.EventTypeWarning, "DeletionBlocked", err.Error())
 			// Requeue to check again later
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: clusterDeletionRetryInterval()}, nil
 		}
 	*/
 
@@ -1812,7 +1825,7 @@ func (r *ClusterReconciler) handleDelete(ctx context.Context, cluster *disasterv
 				cluster.Status.Reason = "VeleroUninstallFailed"
 				cluster.Status.Message = fmt.Sprintf("Failed to uninstall Velero: %v", err)
 				helper.ReportDiagnosticEvent(r.Recorder, cluster, corev1.EventTypeWarning, "VeleroUninstallFailed", err.Error())
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil // Retry
+				return ctrl.Result{RequeueAfter: clusterDeletionRetryInterval()}, nil // Retry
 			}
 			helper.ReportDiagnosticEvent(r.Recorder, cluster, corev1.EventTypeNormal, "VeleroUninstalled", "Velero uninstalled successfully")
 		}
@@ -1822,7 +1835,7 @@ func (r *ClusterReconciler) handleDelete(ctx context.Context, cluster *disasterv
 			cluster.Status.Reason = "VeleroRegistrySecretCleanupFailed"
 			cluster.Status.Message = fmt.Sprintf("Failed to cleanup velero registry pull secret: %v", err)
 			helper.ReportDiagnosticEvent(r.Recorder, cluster, corev1.EventTypeWarning, "VeleroRegistrySecretCleanupFailed", err.Error())
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: clusterDeletionRetryInterval()}, nil
 		}
 	}
 

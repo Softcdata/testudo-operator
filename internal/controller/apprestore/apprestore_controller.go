@@ -31,6 +31,7 @@ import (
 
 	"github.com/softcdata/testudo-operator/internal/controller"
 	. "github.com/softcdata/testudo-operator/internal/controller"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	. "github.com/softcdata/testudo-operator/pkg/metadata"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -65,7 +66,44 @@ type AppRestoreReconciler struct {
 }
 
 func (r *AppRestoreReconciler) restoreRuntimeConfig() RestoreRuntimeConfig {
-	return NewRestoreRuntimeConfig(r.restoreRuntimeOptions...)
+	cfg := NewRestoreRuntimeConfig(r.restoreRuntimeOptions...)
+	snapshot, ok := runtimecfg.ActiveSnapshot()
+	if !ok {
+		return cfg
+	}
+	restoreRuntime := snapshot.RestoreRuntime
+	cfg.RestoreInProgressMaxWaitDefault = restoreRuntime.InProgressMaxWait
+	cfg.RestoreUnknownMaxWaitDefault = restoreRuntime.UnknownMaxWait
+	cfg.RestoreInProgressPollInterval = restoreRuntime.InProgressPollInterval
+	cfg.RestoreUnknownPollInterval = restoreRuntime.UnknownPollInterval
+	cfg.ProgressCompleteGrace = restoreRuntime.ProgressCompleteGrace
+	cfg.StartupGrace = restoreRuntime.StartupGrace
+	cfg.MissingGrace = restoreRuntime.MissingGrace
+	cfg.EmptyStatusGrace = restoreRuntime.EmptyStatusGrace
+	cfg.PodVolumeRestorePendingMaxWait = restoreRuntime.PodVolumeRestorePendingWait
+	cfg.RetryBackoff = restoreRuntime.RetryBackoff
+	cfg.AutoRetryLimit = restoreRuntime.RetryLimit
+	cfg.AutoRetryLimitProgress = restoreRuntime.RetryLimitProgress
+	cfg.AutoRetryLimitStartup = restoreRuntime.RetryLimitStartup
+	cfg.AutoRetryLimitMissing = restoreRuntime.RetryLimitMissing
+	cfg.AutoRetryLimitEmpty = restoreRuntime.RetryLimitEmpty
+	return NewRestoreRuntimeConfig(
+		WithRestoreInProgressMaxWaitDefault(cfg.RestoreInProgressMaxWaitDefault),
+		WithRestoreUnknownMaxWaitDefault(cfg.RestoreUnknownMaxWaitDefault),
+		WithRestoreInProgressPollInterval(cfg.RestoreInProgressPollInterval),
+		WithRestoreUnknownPollInterval(cfg.RestoreUnknownPollInterval),
+		WithProgressCompleteGrace(cfg.ProgressCompleteGrace),
+		WithStartupGrace(cfg.StartupGrace),
+		WithMissingGrace(cfg.MissingGrace),
+		WithEmptyStatusGrace(cfg.EmptyStatusGrace),
+		WithPodVolumeRestorePendingMaxWait(cfg.PodVolumeRestorePendingMaxWait),
+		WithRetryBackoff(cfg.RetryBackoff),
+		WithAutoRetryLimit(cfg.AutoRetryLimit),
+		WithAutoRetryLimitProgress(cfg.AutoRetryLimitProgress),
+		WithAutoRetryLimitStartup(cfg.AutoRetryLimitStartup),
+		WithAutoRetryLimitMissing(cfg.AutoRetryLimitMissing),
+		WithAutoRetryLimitEmpty(cfg.AutoRetryLimitEmpty),
+	)
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to

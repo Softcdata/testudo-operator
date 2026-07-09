@@ -22,6 +22,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -54,6 +55,30 @@ var _ = Describe("DisasterOperation Controller Timeout", func() {
 	})
 
 	Describe("Timeout Inheritance", func() {
+		It("Should use runtime defaults for operation timeout, retry, and requeue helpers", func() {
+			runtimecfg.ResetForTest()
+			DeferCleanup(runtimecfg.ResetForTest)
+
+			snapshot := runtimecfg.DefaultSnapshot()
+			snapshot.OperationRuntime.DefaultTimeoutMinutes = 7
+			snapshot.OperationRuntime.StepStartRequeue = 2 * time.Second
+			snapshot.OperationRuntime.StepRunningRequeue = 4 * time.Second
+			snapshot.OperationRuntime.DefaultRetryInterval = 9 * time.Second
+			runtimecfg.Activate(snapshot)
+
+			Expect(operationDefaultTimeoutMinutes()).To(Equal(int32(7)))
+			Expect(operationStepStartRequeue()).To(Equal(2 * time.Second))
+			Expect(operationStepRunningRequeue()).To(Equal(4 * time.Second))
+
+			reconciler := &DisasterOperationReconciler{}
+			Expect(reconciler.retryWaitDuration(nil)).To(Equal(9 * time.Second))
+			Expect(reconciler.retryWaitDuration(&disasterv1.DisasterOperation{
+				Spec: disasterv1.DisasterOperationSpec{
+					RetryPolicy: &disasterv1.RetryPolicy{RetryIntervalSeconds: 11},
+				},
+			})).To(Equal(11 * time.Second))
+		})
+
 		It("Should inherit timeout from DisasterInstance", func() {
 			instance := &disasterv1.DisasterInstance{
 				ObjectMeta: metav1.ObjectMeta{

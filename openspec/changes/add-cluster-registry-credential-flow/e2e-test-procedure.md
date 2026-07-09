@@ -7,8 +7,9 @@
 1. `disaster-server` cluster create/patch API 能接收 `veleroInstall.imageRegistry`、`username`、`password`、`removeCredential`。
 2. server 能在管理平面 `disaster-system` namespace 创建、轮换、删除 `cluster-velero-regcred-<cluster-name>`。
 3. `Cluster.spec.veleroInstall` 只持久化 `imageRegistry` 和 `registryCredentialSecretRef`，不持久化明文凭据。
-4. operator 能在目标集群 `velero` namespace 先对齐 `velero-regcred-<cluster-name>`，再执行 Helm 安装或升级。
-5. Velero Deployment、NodeAgent、插件 initContainer 实际从认证私有仓库拉取镜像，并引用稳定的 `imagePullSecrets`。
+4. 编辑集群未携带 `veleroInstall.password` 或携带空 `password` 时，server 保留已有 Secret 引用，不把“无法回显密码”解释成清空凭据。
+5. operator 能在目标集群 `velero` namespace 先对齐 `velero-regcred-<cluster-name>`，再执行 Helm 安装或升级。
+6. Velero Deployment、NodeAgent、插件 initContainer 实际从认证私有仓库拉取镜像，并引用稳定的 `imagePullSecrets`。
 
 ## 2. 认证私有仓库选型
 
@@ -45,9 +46,10 @@
 | 场景 | 目标 | API 入口 | 核心断言 |
 | --- | --- | --- | --- |
 | S1 | 创建集群时直接安装私有仓库版 Velero | `POST /clusters` | 管理平面 Secret 已创建；target secret 已创建；Velero/NodeAgent/插件镜像均指向私有仓库；Pod 引用 `velero-regcred-<cluster>` |
-| S2 | 编辑集群时轮换凭据 | `PATCH /clusters/:name` | 管理平面 Secret 内容更新；target secret 内容更新；滚动重启后新 Pod 仍能成功拉取镜像 |
-| S3 | 编辑集群时显式删除凭据 | `PATCH /clusters/:name` | `registryCredentialSecretRef` 被清空；管理平面 Secret 删除；target secret 删除；Velero 工作负载不再引用 `imagePullSecrets` |
-| S4 | 使用错误凭据做补充诊断 | `POST /clusters` 或 `PATCH /clusters/:name` | Secret 同步链路仍成立，但 Velero Pod 进入 `ImagePullBackOff`；该场景用于观察当前实现边界，不作为主验收通过条件 |
+| S2 | 编辑集群但不修改凭据 | `PATCH /clusters/:name` | 请求携带空 `password` 时，管理平面 Secret、`registryCredentialSecretRef`、target secret 和 `imagePullSecrets` 引用保持不变 |
+| S3 | 编辑集群时轮换凭据 | `PATCH /clusters/:name` | 管理平面 Secret 内容更新；target secret 内容更新；滚动重启后新 Pod 仍能成功拉取镜像 |
+| S4 | 编辑集群时显式删除凭据 | `PATCH /clusters/:name` | `registryCredentialSecretRef` 被清空；管理平面 Secret 删除；target secret 删除；Velero 工作负载不再引用 `imagePullSecrets` |
+| S5 | 使用错误凭据做补充诊断 | `POST /clusters` 或 `PATCH /clusters/:name` | Secret 同步链路仍成立，但 Velero Pod 进入 `ImagePullBackOff`；该场景用于观察当前实现边界，不作为主验收通过条件 |
 
 ## 5. 一次性准备
 
@@ -175,9 +177,44 @@ kubectl --kubeconfig "${TEST_CLUSTER_KUBECONFIG}" -n velero get deploy velero \
 3. NodeAgent 镜像前缀为 `${REGISTRY_PREFIX}/velero`
 4. `imagePullSecrets[0].name == ${TARGET_SECRET}`
 
-## 7. 场景 S2：轮换凭据
+## 7. 场景 S2：编辑但不修改凭据
 
-### 7.1 轮换 registry 密码
+该场景验证密码不回显时的编辑语义：前端没有新密码时，可以省略 `password` 字段，也可以发送空字符串；server 必须保留既有凭据。
+
+```bash
+OLD_SECRET_JSON=$(kubectl -n "${MGMT_NS}" get secret "${MGMT_SECRET}" -o jsonpath='{.data.\.dockerconfigjson}')
+
+curl -sS -X PATCH "${API_BASE}/clusters/${TEST_CLUSTER}" \
+  -H 'Content-Type: application/json' \
+  -d "{\n    \"description\": \"velero registry e2e edited without credential change\",\n    \"veleroInstall\": {\n      \"username\": \"${REGISTRY_USER}\",\n      \"password\": \"\"\n    }\n  }" | jq .
+```
+
+### 7.1 验证 Secret 与引用保持不变
+
+```bash
+NEW_SECRET_JSON=$(kubectl -n "${MGMT_NS}" get secret "${MGMT_SECRET}" -o jsonpath='{.data.\.dockerconfigjson}')
+test "${OLD_SECRET_JSON}" = "${NEW_SECRET_JSON}" && echo "management secret unchanged"
+
+kubectl get clusters.testudo.softcdata.com "${TEST_CLUSTER}" -o jsonpath='{.spec.veleroInstall.registryCredentialSecretRef.name}{"\n"}'
+kubectl --kubeconfig "${TEST_CLUSTER_KUBECONFIG}" -n velero get secret "${TARGET_SECRET}" -o name
+kubectl --kubeconfig "${TEST_CLUSTER_KUBECONFIG}" -n velero get deploy velero \
+  -o jsonpath='{.spec.template.spec.imagePullSecrets[0].name}{"\n"}'
+```
+
+验收点：
+1. 管理平面 Secret 内容未变化
+2. `registryCredentialSecretRef.name == ${MGMT_SECRET}`
+3. 目标集群 Secret 仍存在
+4. Velero Deployment 仍引用 `${TARGET_SECRET}`
+
+注意：
+- 若编辑态只是不改密码，payload 可以省略 `password`，也可以提交 `password: ""`。
+- 删除凭据必须显式提交 `removeCredential: true`。
+- 若把 `imageRegistry` 改到另一个 registry host，旧 dockerconfigjson 的认证条目可能不匹配新 host，建议同时提交新的 `username/password` 轮换凭据。
+
+## 8. 场景 S3：轮换凭据
+
+### 8.1 轮换 registry 密码
 
 ```bash
 export REGISTRY_PASS_ROTATED="<SECRET-ROTATED>"
@@ -190,7 +227,7 @@ curl -sS -X PATCH "${API_BASE}/clusters/${TEST_CLUSTER}" \
   -d "{\n    \"veleroInstall\": {\n      \"username\": \"${REGISTRY_USER}\",\n      \"password\": \"${REGISTRY_PASS_ROTATED}\"\n    }\n  }" | jq .
 ```
 
-### 7.2 验证 Secret 内容已同步
+### 8.2 验证 Secret 内容已同步
 
 ```bash
 kubectl -n "${MGMT_NS}" get secret "${MGMT_SECRET}" -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d
@@ -201,7 +238,7 @@ kubectl --kubeconfig "${TEST_CLUSTER_KUBECONFIG}" -n velero get secret "${TARGET
 1. 两边 Secret 的认证内容均已变成新密码
 2. Secret 名称保持稳定，不创建新名称
 
-### 7.3 重启 Velero 工作负载验证新凭据可用
+### 8.3 重启 Velero 工作负载验证新凭据可用
 
 ```bash
 kubectl --kubeconfig "${TEST_CLUSTER_KUBECONFIG}" -n velero rollout restart deploy/velero
@@ -211,7 +248,7 @@ kubectl --kubeconfig "${TEST_CLUSTER_KUBECONFIG}" -n velero rollout status deplo
 kubectl --kubeconfig "${TEST_CLUSTER_KUBECONFIG}" -n velero rollout status ds/node-agent --timeout=180s
 ```
 
-## 8. 场景 S3：显式删除凭据
+## 9. 场景 S4：显式删除凭据
 
 ```bash
 curl -sS -X PATCH "${API_BASE}/clusters/${TEST_CLUSTER}" \
@@ -223,7 +260,7 @@ curl -sS -X PATCH "${API_BASE}/clusters/${TEST_CLUSTER}" \
   }' | jq .
 ```
 
-### 8.1 验证引用与 Secret 清理
+### 9.1 验证引用与 Secret 清理
 
 ```bash
 kubectl get clusters.testudo.softcdata.com "${TEST_CLUSTER}" -o jsonpath='{.spec.veleroInstall.registryCredentialSecretRef.name}{"\n"}'
@@ -238,7 +275,7 @@ kubectl --kubeconfig "${TEST_CLUSTER_KUBECONFIG}" -n velero get deploy velero -o
 3. 目标集群 Secret 已删除
 4. Velero Deployment 不再引用 `imagePullSecrets`
 
-## 9. 场景 S4：错误凭据诊断
+## 10. 场景 S5：错误凭据诊断
 
 该场景只用于观察当前实现边界，不作为 proposal 主验收。
 
@@ -252,7 +289,7 @@ kubectl --kubeconfig "${TEST_CLUSTER_KUBECONFIG}" -n velero get deploy velero -o
 - Pod 进入 `ImagePullBackOff`。
 - 当前 controller 仍可能完成 Helm 命令，因为它没有把镜像实际拉取成功纳入 Helm 成功判定。
 
-## 10. 清理
+## 11. 清理
 
 ```bash
 curl -sS -X DELETE "${API_BASE}/clusters/${TEST_CLUSTER}" | jq .

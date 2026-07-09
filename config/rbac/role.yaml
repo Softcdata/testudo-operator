@@ -87,12 +87,21 @@ rules:
   - disasterjobs/status
   - disasteroperations/status
   - disasterpolicies/status
+  - operatorruntimeconfigs/status
   - resourcesyncs/status
   - storagerepositories/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - testudo.softcdata.com
+  resources:
+  - operatorruntimeconfigs
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - velero.io
   resources:

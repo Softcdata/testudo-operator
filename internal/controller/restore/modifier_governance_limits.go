@@ -13,7 +13,7 @@ import (
 
 const (
 	// Phase 1 complexity guardrails.
-	maxModifierRulesPerInstance     = 200
+	maxModifierRulesPerInstance     = 1000
 	maxPatchesPerRule               = 50
 	maxJSONPointerDepth             = 32
 	maxResourceNameRegexLength      = 256

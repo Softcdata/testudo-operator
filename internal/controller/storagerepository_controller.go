@@ -30,6 +30,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	"github.com/softcdata/testudo-operator/pkg/helper"
 	. "github.com/softcdata/testudo-operator/pkg/metadata"
@@ -96,7 +97,9 @@ type StorageRepositoryReconciler struct {
 	S3Factory S3ClientFactory
 }
 
-const storageRepositoryRequeueInterval = 10 * time.Second
+func storageRepositoryRequeueInterval() time.Duration {
+	return runtimecfg.SnapshotCurrent().StorageRuntime.RequeueInterval
+}
 
 // +kubebuilder:rbac:groups=testudo.softcdata.com,resources=storagerepositories,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=testudo.softcdata.com,resources=storagerepositories/status,verbs=get;update;patch
@@ -123,7 +126,7 @@ func (r *StorageRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "unable to fetch StorageRepository")
-		return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval}, nil
+		return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval()}, nil
 	}
 	logger = logger.WithValues(TraceIDKey, sr.Annotations[AnnotationTraceID])
 	ctx = context.WithValue(ctx, TraceIDKey, sr.Annotations[AnnotationTraceID])
@@ -137,7 +140,7 @@ func (r *StorageRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if r.syncDependencyLabels(sr) {
 		if err := r.Update(ctx, sr); err != nil {
 			logger.Error(err, "failed to update dependency labels")
-			return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval}, nil
+			return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval()}, nil
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
@@ -150,7 +153,7 @@ func (r *StorageRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		controllerutil.AddFinalizer(sr, LabelStorageFinalizer)
 		if err := r.Update(ctx, sr); err != nil {
 			logger.Error(err, "failed to add finalizer")
-			return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval}, nil
+			return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval()}, nil
 		}
 		// Emit 创建存储 Started event
 		traceID := sr.Annotations[AnnotationTraceID]
@@ -236,9 +239,9 @@ func (r *StorageRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 		if updateErr := r.Status().Update(ctx, sr); updateErr != nil {
 			logger.Error(updateErr, "unable to update StorageRepository status after validation failure")
-			return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval}, nil
+			return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval()}, nil
 		}
-		return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval}, nil
+		return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval()}, nil
 	}
 	sr.Status.Status = disasterv1.StorageRepositoryStatusAvailable
 	now := metav1.Now()
@@ -293,9 +296,9 @@ func (r *StorageRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	if err := r.Status().Update(ctx, sr); err != nil {
 		logger.Error(err, "unable to update StorageRepository status")
-		return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval}, nil
+		return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval()}, nil
 	}
-	return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval}, nil
+	return ctrl.Result{RequeueAfter: storageRepositoryRequeueInterval()}, nil
 }
 
 // countBackupsInPrefix helper counts backups in a specific exact prefix

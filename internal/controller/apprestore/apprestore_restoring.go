@@ -71,6 +71,9 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 	} else if err != nil {
 		r.Recorder.Event(appRestore, corev1.EventTypeWarning, "CreateVeleroRestore", "Get Velero Restore failed")
 		logger.Error(err, "error getting Velero Restore")
+		if isTransientKubeAPIError(err) {
+			return disasterv1.PhaseRestoring, ctrl.Result{RequeueAfter: cfg.RetryBackoff}, nil
+		}
 		return disasterv1.PhaseFailed, ctrl.Result{}, err
 	}
 	// Restore exists again, clear missing marker.
@@ -242,7 +245,7 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 		logger.Info("Velero Restore in progress")
 
 		// Requeue to check status again
-		return disasterv1.PhaseRestoring, ctrl.Result{RequeueAfter: RestorePhaseInProgressWaitSeconds}, nil
+		return disasterv1.PhaseRestoring, ctrl.Result{RequeueAfter: cfg.RestoreInProgressPollInterval}, nil
 	default:
 		// Check global timeout for unknown state too
 		timeout := resolveRestoreUnknownTimeout(appRestore, cfg)
@@ -276,7 +279,7 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 		}
 
 		logger.Info("Velero Restore phase unknown, requeueing", "phase", restore.Status.Phase)
-		return disasterv1.PhaseRestoring, ctrl.Result{RequeueAfter: RestorePhaseUnknownWaitSeconds}, nil
+		return disasterv1.PhaseRestoring, ctrl.Result{RequeueAfter: cfg.RestoreUnknownPollInterval}, nil
 	}
 }
 
@@ -306,6 +309,14 @@ func (r *AppRestoreReconciler) handleRestoreStall(
 	}
 
 	if stalled, elapsed := isRestoreProgressCompletedButInProgress(restore, cfg.ProgressCompleteGrace); stalled {
+		activePVRs, pvrErr := hasActivePodVolumeRestores(ctx, cli, restoreName)
+		if pvrErr != nil {
+			return disasterv1.PhaseRestoring, ctrl.Result{}, false, pvrErr
+		}
+		if activePVRs {
+			return "", ctrl.Result{}, false, nil
+		}
+
 		progress := restore.Status.Progress
 		msg := fmt.Sprintf(
 			"Velero Restore %s has remained InProgress with completed progress (%d/%d) for %s",
@@ -361,6 +372,64 @@ func (r *AppRestoreReconciler) handleRestoreStall(
 	}
 
 	return "", ctrl.Result{}, false, nil
+}
+
+func hasActivePodVolumeRestores(ctx context.Context, cli client.Client, restoreName string) (bool, error) {
+	if cli == nil || restoreName == "" {
+		return false, nil
+	}
+
+	pvrList := &velerov1.PodVolumeRestoreList{}
+	if err := cli.List(ctx, pvrList,
+		client.InNamespace(VeleroNamespace),
+		client.MatchingLabels{velerov1.RestoreNameLabel: restoreName},
+	); err != nil {
+		return false, err
+	}
+
+	for i := range pvrList.Items {
+		if !isPodVolumeRestoreTerminalPhase(pvrList.Items[i].Status.Phase) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func isPodVolumeRestoreTerminalPhase(phase velerov1.PodVolumeRestorePhase) bool {
+	switch phase {
+	case velerov1.PodVolumeRestorePhaseCompleted,
+		velerov1.PodVolumeRestorePhaseCanceled,
+		velerov1.PodVolumeRestorePhaseFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTransientKubeAPIError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apierrors.IsTimeout(err) ||
+		apierrors.IsServerTimeout(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsInternalError(err) {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "server was unable to return a response in the time allotted") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "tls handshake timeout") ||
+		strings.Contains(msg, "client.timeout exceeded") ||
+		strings.Contains(msg, "timeout awaiting response headers") ||
+		strings.Contains(msg, "http2: client connection lost") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "server closed idle connection") ||
+		strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "connection refused")
 }
 
 func (r *AppRestoreReconciler) autoRetryOrFailStalledRestore(
@@ -453,6 +522,26 @@ func (r *AppRestoreReconciler) tryRestartVeleroAfterStall(
 		return
 	}
 	logger := logf.FromContext(ctx)
+	if stallType == restoreStallTypeStartupTransient || stallType == restoreStallTypeEmptyStatus {
+		msg := fmt.Sprintf("skip velero rollout restart for %s because restarting Velero may interrupt running backup/restore data paths", stallType)
+		r.Recorder.Event(appRestore, corev1.EventTypeNormal, "VeleroRestartSkipped", msg)
+		logger.Info("skip velero restart for non-fatal restore stall", "stallType", stallType, "restore", restoreName)
+		return
+	}
+
+	running, err := hasRunningVeleroOperations(ctx, cli)
+	if err != nil {
+		logger.Error(err, "failed to inspect running velero operations before restart", "stallType", stallType, "restore", restoreName)
+		r.Recorder.Event(appRestore, corev1.EventTypeWarning, "VeleroRestartSkipped", err.Error())
+		return
+	}
+	if running {
+		msg := fmt.Sprintf("skip velero rollout restart because running Velero operations still exist (stallType=%s)", stallType)
+		r.Recorder.Event(appRestore, corev1.EventTypeNormal, "VeleroRestartSkipped", msg)
+		logger.Info("skip velero restart while velero operations are running", "stallType", stallType, "restore", restoreName)
+		return
+	}
+
 	restarted, err := restartVeleroDeployment(ctx, cli)
 	if err != nil {
 		logger.Error(err, "failed to restart velero after restore stall", "stallType", stallType, "restore", restoreName)
@@ -467,6 +556,80 @@ func (r *AppRestoreReconciler) tryRestartVeleroAfterStall(
 	msg := fmt.Sprintf("detected stalled restore (stallType=%s), triggered velero rollout restart", stallType)
 	r.Recorder.Event(appRestore, corev1.EventTypeNormal, "VeleroRestartTriggered", msg)
 	logger.Info("triggered velero rollout restart after stalled restore", "stallType", stallType, "restore", restoreName)
+}
+
+func hasRunningVeleroOperations(ctx context.Context, cli client.Client) (bool, error) {
+	if cli == nil {
+		return false, nil
+	}
+
+	backupList := &velerov1.BackupList{}
+	if err := cli.List(ctx, backupList, client.InNamespace(VeleroNamespace)); err != nil {
+		return false, err
+	}
+	for i := range backupList.Items {
+		if isVeleroBackupRunning(backupList.Items[i].Status.Phase) {
+			return true, nil
+		}
+	}
+
+	restoreList := &velerov1.RestoreList{}
+	if err := cli.List(ctx, restoreList, client.InNamespace(VeleroNamespace)); err != nil {
+		return false, err
+	}
+	for i := range restoreList.Items {
+		if isVeleroRestoreRunning(restoreList.Items[i].Status.Phase) {
+			return true, nil
+		}
+	}
+
+	pvbList := &velerov1.PodVolumeBackupList{}
+	if err := cli.List(ctx, pvbList, client.InNamespace(VeleroNamespace)); err != nil {
+		return false, err
+	}
+	for i := range pvbList.Items {
+		if !isPodVolumeBackupTerminalPhase(pvbList.Items[i].Status.Phase) {
+			return true, nil
+		}
+	}
+
+	pvrList := &velerov1.PodVolumeRestoreList{}
+	if err := cli.List(ctx, pvrList, client.InNamespace(VeleroNamespace)); err != nil {
+		return false, err
+	}
+	for i := range pvrList.Items {
+		if !isPodVolumeRestoreTerminalPhase(pvrList.Items[i].Status.Phase) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func isVeleroBackupRunning(phase velerov1.BackupPhase) bool {
+	switch phase {
+	case velerov1.BackupPhaseNew,
+		velerov1.BackupPhaseInProgress,
+		velerov1.BackupPhaseWaitingForPluginOperations,
+		velerov1.BackupPhaseWaitingForPluginOperationsPartiallyFailed,
+		velerov1.BackupPhaseFinalizing,
+		velerov1.BackupPhaseFinalizingPartiallyFailed,
+		velerov1.BackupPhaseDeleting:
+		return true
+	default:
+		return false
+	}
+}
+
+func isPodVolumeBackupTerminalPhase(phase velerov1.PodVolumeBackupPhase) bool {
+	switch phase {
+	case velerov1.PodVolumeBackupPhaseCompleted,
+		velerov1.PodVolumeBackupPhaseCanceled,
+		velerov1.PodVolumeBackupPhaseFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func restartVeleroDeployment(ctx context.Context, cli client.Client) (bool, error) {

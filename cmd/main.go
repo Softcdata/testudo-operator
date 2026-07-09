@@ -50,6 +50,7 @@ import (
 	"github.com/softcdata/testudo-operator/internal/controller/disasterinstance"
 	"github.com/softcdata/testudo-operator/internal/controller/disasteroperation"
 	"github.com/softcdata/testudo-operator/internal/controller/resourcesync"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	"github.com/softcdata/testudo-operator/internal/controller/scheduler"
 	"github.com/softcdata/testudo-operator/internal/dependencybackfill"
 	clusterwebhook "github.com/softcdata/testudo-operator/internal/webhook/cluster"
@@ -132,6 +133,8 @@ func main() {
 	helper.SetDefaultEventNamespace(managementNamespace)
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	appRestoreRuntimeOptions := loadAppRestoreRuntimeOptions()
+	runtimecfg.SetStartupDefaults(loadStartupRuntimeConfig(appRestoreRuntimeOptions))
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -243,6 +246,15 @@ func main() {
 		},
 	)
 
+	if err := (&runtimecfg.Reconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("runtimeconfig-controller"),
+		Namespace: managementNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "OperatorRuntimeConfig")
+		os.Exit(1)
+	}
 	if err := (&controller.DisasterBackupReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -304,7 +316,7 @@ func main() {
 		mgr.GetClient(),
 		mgr.GetScheme(),
 		mgr.GetEventRecorderFor("apprestore-controller"),
-		apprestore.WithRestoreRuntime(loadAppRestoreRuntimeOptions()...),
+		apprestore.WithRestoreRuntime(appRestoreRuntimeOptions...),
 	)
 	if err := appRestoreReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AppRestore")
@@ -432,11 +444,29 @@ func main() {
 func loadAppRestoreRuntimeOptions() []apprestore.RestoreRuntimeOption {
 	opts := make([]apprestore.RestoreRuntimeOption, 0, 7)
 
+	if v, ok := parseEnvDuration("APPRESTORE_IN_PROGRESS_MAX_WAIT"); ok {
+		opts = append(opts, apprestore.WithRestoreInProgressMaxWaitDefault(v))
+	}
+	if v, ok := parseEnvDuration("APPRESTORE_UNKNOWN_MAX_WAIT"); ok {
+		opts = append(opts, apprestore.WithRestoreUnknownMaxWaitDefault(v))
+	}
+	if v, ok := parseEnvDuration("APPRESTORE_PROGRESS_COMPLETE_GRACE"); ok {
+		opts = append(opts, apprestore.WithProgressCompleteGrace(v))
+	}
+	if v, ok := parseEnvDuration("APPRESTORE_STARTUP_GRACE"); ok {
+		opts = append(opts, apprestore.WithStartupGrace(v))
+	}
 	if v, ok := parseEnvDuration("APPRESTORE_MISSING_GRACE"); ok {
 		opts = append(opts, apprestore.WithMissingGrace(v))
 	}
 	if v, ok := parseEnvDuration("APPRESTORE_EMPTY_STATUS_GRACE"); ok {
 		opts = append(opts, apprestore.WithEmptyStatusGrace(v))
+	}
+	if v, ok := parseEnvDuration("APPRESTORE_PVR_PENDING_MAX_WAIT"); ok {
+		opts = append(opts, apprestore.WithPodVolumeRestorePendingMaxWait(v))
+	}
+	if v, ok := parseEnvInt("APPRESTORE_RETRY_LIMIT"); ok {
+		opts = append(opts, apprestore.WithAutoRetryLimit(v))
 	}
 	if v, ok := parseEnvInt("APPRESTORE_RETRY_LIMIT_PROGRESS"); ok {
 		opts = append(opts, apprestore.WithAutoRetryLimitProgress(v))
@@ -455,6 +485,28 @@ func loadAppRestoreRuntimeOptions() []apprestore.RestoreRuntimeOption {
 	}
 
 	return opts
+}
+
+func loadStartupRuntimeConfig(appRestoreRuntimeOptions []apprestore.RestoreRuntimeOption) runtimecfg.Snapshot {
+	snapshot := runtimecfg.DefaultSnapshot()
+	snapshot.Source = "startup"
+	restoreRuntime := apprestore.NewRestoreRuntimeConfig(appRestoreRuntimeOptions...)
+	snapshot.RestoreRuntime.InProgressMaxWait = restoreRuntime.RestoreInProgressMaxWaitDefault
+	snapshot.RestoreRuntime.UnknownMaxWait = restoreRuntime.RestoreUnknownMaxWaitDefault
+	snapshot.RestoreRuntime.InProgressPollInterval = restoreRuntime.RestoreInProgressPollInterval
+	snapshot.RestoreRuntime.UnknownPollInterval = restoreRuntime.RestoreUnknownPollInterval
+	snapshot.RestoreRuntime.ProgressCompleteGrace = restoreRuntime.ProgressCompleteGrace
+	snapshot.RestoreRuntime.StartupGrace = restoreRuntime.StartupGrace
+	snapshot.RestoreRuntime.MissingGrace = restoreRuntime.MissingGrace
+	snapshot.RestoreRuntime.EmptyStatusGrace = restoreRuntime.EmptyStatusGrace
+	snapshot.RestoreRuntime.PodVolumeRestorePendingWait = restoreRuntime.PodVolumeRestorePendingMaxWait
+	snapshot.RestoreRuntime.RetryBackoff = restoreRuntime.RetryBackoff
+	snapshot.RestoreRuntime.RetryLimit = restoreRuntime.AutoRetryLimit
+	snapshot.RestoreRuntime.RetryLimitProgress = restoreRuntime.AutoRetryLimitProgress
+	snapshot.RestoreRuntime.RetryLimitStartup = restoreRuntime.AutoRetryLimitStartup
+	snapshot.RestoreRuntime.RetryLimitMissing = restoreRuntime.AutoRetryLimitMissing
+	snapshot.RestoreRuntime.RetryLimitEmpty = restoreRuntime.AutoRetryLimitEmpty
+	return snapshot
 }
 
 func parseEnvDuration(envKey string) (time.Duration, bool) {

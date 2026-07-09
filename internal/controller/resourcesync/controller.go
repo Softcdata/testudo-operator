@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -41,6 +40,7 @@ import (
 	ctrlpkg "github.com/softcdata/testudo-operator/internal/controller"
 	"github.com/softcdata/testudo-operator/internal/controller/imagemapping"
 	restorebuilder "github.com/softcdata/testudo-operator/internal/controller/restore"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	"github.com/softcdata/testudo-operator/internal/controller/scheduler"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	"github.com/softcdata/testudo-operator/pkg/helper"
@@ -285,7 +285,7 @@ func (r *ResourceSyncReconciler) triggerSync(namespace, name string) {
 	log := r.Log.WithValues("resourcesync", namespace+"/"+name)
 	log.Info("Cron 触发同步")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), runtimecfg.SnapshotCurrent().SyncRuntime.SchedulerUpdateTimeout)
 	defer cancel()
 
 	resourceSync := &disasterv1.ResourceSync{}
@@ -455,10 +455,11 @@ func (r *ResourceSyncReconciler) executeSync(ctx context.Context, log logr.Logge
 	// AppBackup 存在
 	// 关键修复：检查 AppBackup 的 Cluster 是否正确（反向保护场景下，Source 可能已改变）
 	newBackupSpec := r.buildAppBackupSpec(instance, config)
-	if appBackup.Spec.Cluster != newBackupSpec.Cluster || !reflect.DeepEqual(appBackup.Spec.Template, newBackupSpec.Template) {
+	if ctrlpkg.AppBackupSpecNeedsUpdate(appBackup.Spec, newBackupSpec) {
 		log.Info("更新 ResourceSync AppBackup 模板", "oldCluster", appBackup.Spec.Cluster, "newCluster", newBackupSpec.Cluster)
 		appBackup.Spec.Cluster = newBackupSpec.Cluster
 		appBackup.Spec.Template = newBackupSpec.Template
+		appBackup.Spec.Timeout = newBackupSpec.Timeout
 		if err := r.Update(ctx, appBackup); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -490,7 +491,7 @@ func (r *ResourceSyncReconciler) executeSync(ctx context.Context, log logr.Logge
 				helper.SetConditionError(&resourceSync.Status.Conditions, "BackupFailed", resourceSyncReasonBackupFailed, failMsg)
 				return r.failResourceSync(ctx, resourceSync, clusterPair, resourceSyncReasonBackupFailed, failMsg)
 			}
-			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: runtimecfg.SnapshotCurrent().SyncRuntime.BackupObserveRequeue}, nil
 		}
 
 		// 1. 兼容旧状态：没有可关联的 Backup Action 时，只按上次完成时间之后的历史记录兜底。
@@ -559,7 +560,7 @@ func (r *ResourceSyncReconciler) executeSync(ctx context.Context, log logr.Logge
 		}
 
 		if !found {
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: runtimecfg.SnapshotCurrent().SyncRuntime.HistoryMissingRequeue}, nil
 		}
 
 		if backupStatus == string(velerov1.BackupPhaseCompleted) {
@@ -587,7 +588,7 @@ func (r *ResourceSyncReconciler) executeSync(ctx context.Context, log logr.Logge
 		}
 
 		// InProgress
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: runtimecfg.SnapshotCurrent().SyncRuntime.BackupInProgressRequeue}, nil
 	}
 
 }
@@ -694,7 +695,7 @@ func (r *ResourceSyncReconciler) handleRestore(ctx context.Context, log logr.Log
 					return ctrl.Result{}, err
 				}
 			}
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: runtimecfg.SnapshotCurrent().SyncRuntime.RestoreObserveRequeue}, nil
 		}
 
 		totalRestoreItems += lookupResourceSyncRestoreItems(restore)
@@ -786,6 +787,7 @@ func (r *ResourceSyncReconciler) buildAppBackupSpec(instance *disasterv1.Disaste
 	falseVar := false
 	spec := disasterv1.AppBackupSpec{
 		Cluster: source,
+		Timeout: ctrlpkg.ResolveAppBackupTimeout(instance),
 		// DisasterPolicy: config.Spec.ResourceSyncPolicy, // V2 does not use V1 DisasterPolicy
 		Template: velerov1.BackupSpec{
 			IncludedNamespaces: instance.Spec.Namespaces,

@@ -3,6 +3,7 @@ package disasteroperation
 import (
 	"time"
 
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 )
 
@@ -24,7 +25,7 @@ func (r *DisasterOperationReconciler) shouldRetry(operation *disasterv1.Disaster
 
 func (r *DisasterOperationReconciler) retryWaitDuration(operation *disasterv1.DisasterOperation) time.Duration {
 	if operation == nil || operation.Spec.RetryPolicy == nil || operation.Spec.RetryPolicy.RetryIntervalSeconds <= 0 {
-		return 5 * time.Second
+		return runtimecfg.SnapshotCurrent().OperationRuntime.DefaultRetryInterval
 	}
 	return time.Duration(operation.Spec.RetryPolicy.RetryIntervalSeconds) * time.Second
 }

@@ -22,6 +22,10 @@
   - `username`
   - `password`
   - `removeCredential`
+- 读模型允许回显非敏感状态：
+  - `imageRegistry`
+  - `username`（从管理平面 Secret 解析得到时可回显，用于编辑态提示）
+  - `credentialConfigured`
 - CR 内部持久化字段集：
   - `imageRegistry`
   - `registryCredentialSecretRef`
@@ -55,6 +59,17 @@
   - 再同步 target secret
   - 最后执行 Helm 安装/升级
   - 缺任一步都阻断本轮安装
+
+### D4a. 编辑请求必须区分“未修改凭据”和“删除凭据”
+- 密码不回显、也不写入 `Cluster` CR，因此编辑态不能依赖“重新提交旧密码”来保留凭据。
+- server / web 的更新语义必须使用字段是否出现表达意图：
+  - 未携带 `veleroInstall.password` 或携带空 `veleroInstall.password`：保持现有管理平面 Secret 和 `registryCredentialSecretRef` 不变。
+  - 携带非空 `veleroInstall.username/password`：轮换管理平面 Secret 内容，Secret 名称保持稳定。
+  - 携带 `veleroInstall.removeCredential=true`：删除管理平面 Secret 并清空 `registryCredentialSecretRef`。
+  - PATCH 显式携带 `veleroInstall.username=""` 且未设置 `removeCredential=true`：保持现有凭据不变。
+  - PATCH 显式携带 `veleroInstall.imageRegistry=""`：清空整段 Velero 安装配置，并删除 server 管理的 registry Secret。
+- 前端编辑页若密码输入框为空且用户没有选择“删除凭据”，可以省略 `password` 字段，也可以发送空字符串；server 必须将其视为不修改凭据。
+- 若只修改 `imageRegistry` 且保留旧凭据，operator 会继续同步同一个 Secret；但当 registry host 发生变化时，旧 dockerconfigjson 的 auth key 可能不匹配新仓库，产品应提示用户同时轮换凭据。
 
 ### D5. 采用“基线 values + per-cluster 临时 overlay”而不是原地改模板
 - 基线文件仍然是容器内共享的 `./velero.values.yaml`
@@ -121,6 +136,12 @@
 2. `ClusterReconciler` 对齐 target secret
 3. operator 重新执行 Helm upgrade，确保安装结果仍引用稳定 secret 名称
 
+### 保留凭据的编辑
+1. 用户编辑 `Cluster` 的非凭据字段，或仅修改 `veleroInstall.imageRegistry`
+2. 请求体不携带 `veleroInstall.password`，或携带 `veleroInstall.password=""`
+3. server 保留已有 `registryCredentialSecretRef` 和管理平面 Secret
+4. `ClusterReconciler` 继续同步既有 Secret 到目标集群，并在 Helm values 中引用稳定 target secret 名称
+
 ### 删除
 - 删除凭据引用：
   - operator 删除远端 Secret
@@ -138,11 +159,12 @@
 
 ### 主验收场景
 1. S1 创建集群：`POST /clusters` 携带 `veleroInstall.imageRegistry + username/password`，验证管理平面 Secret、target secret、镜像地址改写与 `imagePullSecrets` 注入。
-2. S2 轮换凭据：`PATCH /clusters/:name` 只更新凭据，验证管理平面 Secret 与 target secret 内容同步更新，滚动重启后 Velero 工作负载仍可拉取镜像。
-3. S3 删除凭据：`PATCH /clusters/:name` 发送 `removeCredential=true`，验证 Secret 引用清空、管理平面 Secret 清理、target secret 清理，以及 Helm 结果不再引用 `imagePullSecrets`。
+2. S2 保留凭据编辑：`PATCH /clusters/:name` 携带空 `password`，验证管理平面 Secret、`registryCredentialSecretRef` 和 target secret 未被清空。
+3. S3 轮换凭据：`PATCH /clusters/:name` 只更新凭据，验证管理平面 Secret 与 target secret 内容同步更新，滚动重启后 Velero 工作负载仍可拉取镜像。
+4. S4 删除凭据：`PATCH /clusters/:name` 发送 `removeCredential=true`，验证 Secret 引用清空、管理平面 Secret 清理、target secret 清理，以及 Helm 结果不再引用 `imagePullSecrets`。
 
 ### 补充诊断场景
-- S4 错误凭据：用于观察当前实现边界。预期是 Secret 生命周期链路仍成立，但 Velero Pod 会进入 `ImagePullBackOff`。该场景不作为 proposal 主验收通过条件。
+- S5 错误凭据：用于观察当前实现边界。预期是 Secret 生命周期链路仍成立，但 Velero Pod 会进入 `ImagePullBackOff`。该场景不作为 proposal 主验收通过条件。
 
 ## 失败语义
 - 本地 Secret 缺失：`Cluster` 不进入安装成功态，写明确 reason/message。

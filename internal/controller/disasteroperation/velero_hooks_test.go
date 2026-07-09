@@ -88,6 +88,12 @@ func TestExecuteDrillRestoreData_RewritesDataRestoreHookForTrafficless(t *testin
 	}
 	dataSync := &disasterv1.DataSync{
 		ObjectMeta: metav1.ObjectMeta{Name: "ds-inst-a", Namespace: "default"},
+		Spec: disasterv1.DataSyncSpec{
+			TrafficlessConfig: &disasterv1.TrafficlessConfig{
+				Image:   "registry.local/rongzai/busybox:1.36",
+				Command: []string{"sleep", "3600"},
+			},
+		},
 		Status: disasterv1.DataSyncStatus{
 			LastBackupName: "backup-001",
 		},
@@ -136,6 +142,15 @@ func TestExecuteDrillRestoreData_RewritesDataRestoreHookForTrafficless(t *testin
 	if !hasDisasterOperationMarkerRule(appRestore.Spec.ResourceModifierRules, []string{"app-ns"}) {
 		t.Fatalf("expected marker rule to match backup namespace app-ns, got %#v", appRestore.Spec.ResourceModifierRules)
 	}
+	if got, ok := disasterOperationPatchValue(appRestore.Spec.ResourceModifierRules, "/spec/containers/0/image"); !ok || got != "registry.local/rongzai/busybox:1.36" {
+		t.Fatalf("expected drill trafficless image from DataSync config, got value=%q found=%v rules=%#v", got, ok, appRestore.Spec.ResourceModifierRules)
+	}
+	if got, ok := disasterOperationPatchValue(appRestore.Spec.ResourceModifierRules, "/spec/containers/0/command"); !ok || got != `["sleep","3600"]` {
+		t.Fatalf("expected drill trafficless command from DataSync config, got value=%q found=%v rules=%#v", got, ok, appRestore.Spec.ResourceModifierRules)
+	}
+	if got, ok := disasterOperationPatchValue(appRestore.Spec.ResourceModifierRules, "/spec/containers/0/args"); !ok || got != "[]" {
+		t.Fatalf("expected drill trafficless args to be cleared, got value=%q found=%v rules=%#v", got, ok, appRestore.Spec.ResourceModifierRules)
+	}
 }
 
 func hasDisasterOperationMarkerRule(rules []disasterv1.ResourceModifierRule, namespaces []string) bool {
@@ -153,4 +168,15 @@ func hasDisasterOperationMarkerRule(rules []disasterv1.ResourceModifierRule, nam
 		}
 	}
 	return false
+}
+
+func disasterOperationPatchValue(rules []disasterv1.ResourceModifierRule, path string) (string, bool) {
+	for _, rule := range rules {
+		for _, patch := range rule.Patches {
+			if patch.Path == path {
+				return patch.Value, true
+			}
+		}
+	}
+	return "", false
 }

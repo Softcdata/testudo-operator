@@ -10,4 +10,5 @@ resources:
 - disaster_v1_appbackup.yaml
 - disaster_v1_apprestore.yaml
 - disaster_v1_disasterpolicy.yaml
+- disaster_v1_operatorruntimeconfig.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

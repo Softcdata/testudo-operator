@@ -119,6 +119,241 @@ func TestCompileDynamicImageRewriteRules_PreservesDigestSuffix(t *testing.T) {
 	}
 }
 
+func TestCompileDynamicImageRewriteRules_CoversMultipleDeploymentInitContainers(t *testing.T) {
+	t.Parallel()
+
+	source := newDynamicImageRewriteFakeClient(t,
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "bk-apigateway", Namespace: "blueking"},
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:  "api",
+							Image: "10.134.81.9:5000/blueking/bk-apigateway:v1",
+						}},
+						InitContainers: []corev1.Container{
+							{
+								Name:  "wait-storages",
+								Image: "10.134.81.9:5000/groundnuty/k8s-wait-for:v1.5.1",
+							},
+							{
+								Name:  "bk-apigateway-operator",
+								Image: "10.134.81.9:5000/groundnuty/k8s-wait-for:v1.5.1",
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+	instance := dynamicImageRewriteInstance("cluster-a", "cluster-b", []disasterv1.BulkModifierAction{dynamicImageRewriteAction(
+		"rewrite-primary-registry",
+		"10.134.81.9:5000/",
+		"registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/",
+		disasterv1.ImageRewriteUnmatchedPolicyKeep,
+	)})
+
+	rules, summary, err := (&DynamicImageRewriteCompiler{}).CompileDynamicImageRewriteRules(
+		context.Background(),
+		instance,
+		source,
+		disasterv1.RestoreModifierApplyResourceSync,
+		WithDynamicImageRewriteBaseline("cluster-a", "cluster-b"),
+	)
+	if err != nil {
+		t.Fatalf("CompileDynamicImageRewriteRules returned error: %v", err)
+	}
+	if summary.GeneratedRuleCount != 3 || summary.MatchedImageCount != 3 {
+		t.Fatalf("unexpected summary: %+v", summary)
+	}
+
+	paths := dynamicImageRewriteRuleTargetsByPath(rules)
+	if got := paths["/spec/template/spec/initContainers/0/image"]; got != "registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/groundnuty/k8s-wait-for:v1.5.1" {
+		t.Fatalf("unexpected first initContainer target: %s", got)
+	}
+	if got := paths["/spec/template/spec/initContainers/1/image"]; got != "registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/groundnuty/k8s-wait-for:v1.5.1" {
+		t.Fatalf("unexpected second initContainer target: %s", got)
+	}
+}
+
+func TestCompileDynamicImageRewriteRules_CoversMultipleJobInitContainers(t *testing.T) {
+	t.Parallel()
+
+	source := newDynamicImageRewriteFakeClient(t,
+		&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{Name: "bk-apigateway-wait-storages", Namespace: "blueking"},
+			Spec: batchv1.JobSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						RestartPolicy: corev1.RestartPolicyNever,
+						Containers: []corev1.Container{{
+							Name:  "job",
+							Image: "10.134.81.9:5000/blueking/job-runner:v1",
+						}},
+						InitContainers: []corev1.Container{
+							{
+								Name:  "wait-storages",
+								Image: "10.134.81.9:5000/groundnuty/k8s-wait-for:v1.5.1",
+							},
+							{
+								Name:  "bk-apigateway-operator",
+								Image: "10.134.81.9:5000/groundnuty/k8s-wait-for:v1.5.1",
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+	instance := dynamicImageRewriteInstance("cluster-a", "cluster-b", []disasterv1.BulkModifierAction{dynamicImageRewriteAction(
+		"rewrite-primary-registry",
+		"10.134.81.9:5000/",
+		"registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/",
+		disasterv1.ImageRewriteUnmatchedPolicyKeep,
+	)})
+
+	rules, summary, err := (&DynamicImageRewriteCompiler{}).CompileDynamicImageRewriteRules(
+		context.Background(),
+		instance,
+		source,
+		disasterv1.RestoreModifierApplyResourceSync,
+		WithDynamicImageRewriteBaseline("cluster-a", "cluster-b"),
+	)
+	if err != nil {
+		t.Fatalf("CompileDynamicImageRewriteRules returned error: %v", err)
+	}
+	if summary.GeneratedRuleCount != 3 || summary.MatchedImageCount != 3 {
+		t.Fatalf("unexpected summary: %+v", summary)
+	}
+
+	paths := dynamicImageRewriteRuleTargetsByPath(rules)
+	if got := paths["/spec/template/spec/initContainers/0/image"]; got != "registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/groundnuty/k8s-wait-for:v1.5.1" {
+		t.Fatalf("unexpected first initContainer target: %s", got)
+	}
+	if got := paths["/spec/template/spec/initContainers/1/image"]; got != "registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/groundnuty/k8s-wait-for:v1.5.1" {
+		t.Fatalf("unexpected second initContainer target: %s", got)
+	}
+}
+
+func TestCompileDynamicImageRewriteRules_CoversReplicaSetInitContainers(t *testing.T) {
+	t.Parallel()
+
+	source := newDynamicImageRewriteFakeClient(t,
+		&appsv1.ReplicaSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "bk-apigateway-abc123", Namespace: "blueking"},
+			Spec: appsv1.ReplicaSetSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:  "api",
+							Image: "10.134.81.9:5000/blueking/bk-apigateway:v1",
+						}},
+						InitContainers: []corev1.Container{
+							{
+								Name:  "wait-storages",
+								Image: "10.134.81.9:5000/groundnuty/k8s-wait-for:v1.5.1",
+							},
+							{
+								Name:  "bk-apigateway-operator",
+								Image: "10.134.81.9:5000/groundnuty/k8s-wait-for:v1.5.1",
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+	instance := dynamicImageRewriteInstance("cluster-a", "cluster-b", []disasterv1.BulkModifierAction{dynamicImageRewriteAction(
+		"rewrite-primary-registry",
+		"10.134.81.9:5000/",
+		"registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/",
+		disasterv1.ImageRewriteUnmatchedPolicyKeep,
+	)})
+
+	rules, summary, err := (&DynamicImageRewriteCompiler{}).CompileDynamicImageRewriteRules(
+		context.Background(),
+		instance,
+		source,
+		disasterv1.RestoreModifierApplyResourceSync,
+		WithDynamicImageRewriteBaseline("cluster-a", "cluster-b"),
+	)
+	if err != nil {
+		t.Fatalf("CompileDynamicImageRewriteRules returned error: %v", err)
+	}
+	if summary.GeneratedRuleCount != 3 || summary.MatchedImageCount != 3 {
+		t.Fatalf("unexpected summary: %+v", summary)
+	}
+
+	rule := dynamicImageRewriteRuleByPath(rules, "/spec/template/spec/initContainers/1/image")
+	if rule == nil {
+		t.Fatalf("expected second initContainer rule, got %#v", rules)
+	}
+	if rule.Conditions.GroupResource != "replicasets.apps" {
+		t.Fatalf("unexpected groupResource: %s", rule.Conditions.GroupResource)
+	}
+	if rule.Pair == nil || rule.Pair.TargetValue != "registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/groundnuty/k8s-wait-for:v1.5.1" {
+		t.Fatalf("unexpected second initContainer target rule: %#v", rule)
+	}
+}
+
+func TestCompileDynamicImageRewriteRules_CoversReplicationControllerInitContainers(t *testing.T) {
+	t.Parallel()
+
+	source := newDynamicImageRewriteFakeClient(t,
+		&corev1.ReplicationController{
+			ObjectMeta: metav1.ObjectMeta{Name: "legacy-api", Namespace: "blueking"},
+			Spec: corev1.ReplicationControllerSpec{
+				Template: &corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:  "api",
+							Image: "10.134.81.9:5000/blueking/legacy-api:v1",
+						}},
+						InitContainers: []corev1.Container{
+							{
+								Name:  "wait-storages",
+								Image: "10.134.81.9:5000/groundnuty/k8s-wait-for:v1.5.1",
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+	instance := dynamicImageRewriteInstance("cluster-a", "cluster-b", []disasterv1.BulkModifierAction{dynamicImageRewriteAction(
+		"rewrite-primary-registry",
+		"10.134.81.9:5000/",
+		"registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/",
+		disasterv1.ImageRewriteUnmatchedPolicyKeep,
+	)})
+
+	rules, summary, err := (&DynamicImageRewriteCompiler{}).CompileDynamicImageRewriteRules(
+		context.Background(),
+		instance,
+		source,
+		disasterv1.RestoreModifierApplyResourceSync,
+		WithDynamicImageRewriteBaseline("cluster-a", "cluster-b"),
+	)
+	if err != nil {
+		t.Fatalf("CompileDynamicImageRewriteRules returned error: %v", err)
+	}
+	if summary.GeneratedRuleCount != 2 || summary.MatchedImageCount != 2 {
+		t.Fatalf("unexpected summary: %+v", summary)
+	}
+
+	rule := dynamicImageRewriteRuleByPath(rules, "/spec/template/spec/initContainers/0/image")
+	if rule == nil {
+		t.Fatalf("expected initContainer rule, got %#v", rules)
+	}
+	if rule.Conditions.GroupResource != "replicationcontrollers" {
+		t.Fatalf("unexpected groupResource: %s", rule.Conditions.GroupResource)
+	}
+	if rule.Pair == nil || rule.Pair.TargetValue != "registry-tke.szmacloud.csg:30088/dr_images/10.134.81.9_5000/groundnuty/k8s-wait-for:v1.5.1" {
+		t.Fatalf("unexpected initContainer target rule: %#v", rule)
+	}
+}
+
 func TestCompileDynamicImageRewriteRules_UsesLongestPrefix(t *testing.T) {
 	t.Parallel()
 
@@ -354,6 +589,26 @@ func newDynamicImageRewriteFakeClient(t *testing.T, objects ...client.Object) cl
 		t.Fatalf("add batch scheme: %v", err)
 	}
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+}
+
+func dynamicImageRewriteRuleTargetsByPath(rules []disasterv1.RestoreModifierRule) map[string]string {
+	out := make(map[string]string, len(rules))
+	for _, rule := range rules {
+		if rule.Pair == nil {
+			continue
+		}
+		out[rule.Pair.Path] = rule.Pair.TargetValue
+	}
+	return out
+}
+
+func dynamicImageRewriteRuleByPath(rules []disasterv1.RestoreModifierRule, path string) *disasterv1.RestoreModifierRule {
+	for idx := range rules {
+		if rules[idx].Pair != nil && rules[idx].Pair.Path == path {
+			return &rules[idx]
+		}
+	}
+	return nil
 }
 
 func dynamicImageRewriteInstance(primary, secondary string, actions []disasterv1.BulkModifierAction) *disasterv1.DisasterInstance {

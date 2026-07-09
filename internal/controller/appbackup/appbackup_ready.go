@@ -26,6 +26,7 @@ import (
 	"time"
 
 	. "github.com/softcdata/testudo-operator/internal/controller"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	. "github.com/softcdata/testudo-operator/pkg/metadata"
 
 	corev1 "k8s.io/api/core/v1"
@@ -445,8 +446,9 @@ func (h *ReadyHandler) Handle(ctx context.Context, r *AppBackupReconciler, appBa
 
 	// 5. Timeout Check for In-Progress or not-yet-started Backups
 	// Check if any non-terminal backup has exceeded the timeout threshold.
-	runningTimeout := BackupPhaseInProgressMaxWait
-	unknownTimeout := BackupPhaseUnknownMaxWait
+	backupRuntime := runtimecfg.SnapshotCurrent().BackupRuntime
+	runningTimeout := backupRuntime.InProgressMaxWait
+	unknownTimeout := backupRuntime.UnknownMaxWait
 	if appBackup.Spec.Timeout != nil {
 		runningTimeout = appBackup.Spec.Timeout.Duration
 		unknownTimeout = appBackup.Spec.Timeout.Duration
@@ -493,7 +495,7 @@ func (h *ReadyHandler) Handle(ctx context.Context, r *AppBackupReconciler, appBa
 	// 6. Status Sync
 	h.syncStatus(ctx, r, appBackup, backups, latestBackup)
 	if appBackup.Status.LatestBackupStatus == disasterv1.LastBackupStatusInProgress {
-		return PhaseReady, ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		return PhaseReady, ctrl.Result{RequeueAfter: backupRuntime.PollInterval}, nil
 	}
 	return PhaseReady, ctrl.Result{RequeueAfter: time.Minute}, nil
 }

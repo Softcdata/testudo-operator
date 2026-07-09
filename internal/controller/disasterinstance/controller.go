@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	"github.com/softcdata/testudo-operator/pkg/helper"
 	"github.com/softcdata/testudo-operator/pkg/metadata"
@@ -59,6 +60,22 @@ const (
 	defaultTransitionWatchdogTimeout = 2 * time.Minute
 	minTransitionWatchdogTimeout     = 30 * time.Second
 )
+
+func instanceRuntime() runtimecfg.InstanceRuntime {
+	return runtimecfg.SnapshotCurrent().InstanceRuntime
+}
+
+func instanceInitializingRequeue() time.Duration {
+	return instanceRuntime().InitializingRequeue
+}
+
+func instanceSteadyRequeue() time.Duration {
+	return instanceRuntime().SteadyRequeue
+}
+
+func instanceFailedRequeue() time.Duration {
+	return instanceRuntime().FailedRequeue
+}
 
 // DisasterInstanceReconciler 负责调谐 DisasterInstance 对象
 type DisasterInstanceReconciler struct {
@@ -408,7 +425,7 @@ func (r *DisasterInstanceReconciler) handleInitializing(ctx context.Context, log
 	if err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: instance.Status.DataSyncName}, dataSync); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("DataSync 未找到，重新入队")
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: instanceInitializingRequeue()}, nil
 		}
 		return ctrl.Result{}, err
 	}
@@ -418,7 +435,7 @@ func (r *DisasterInstanceReconciler) handleInitializing(ctx context.Context, log
 	if err := r.Get(ctx, client.ObjectKey{Namespace: instance.Namespace, Name: instance.Status.ResourceSyncName}, resourceSync); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("ResourceSync 未找到，重新入队")
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: instanceInitializingRequeue()}, nil
 		}
 		return ctrl.Result{}, err
 	}
@@ -475,7 +492,7 @@ func (r *DisasterInstanceReconciler) handleInitializing(ctx context.Context, log
 	)
 
 	// 仍在初始化，重新入队
-	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: instanceInitializingRequeue()}, nil
 }
 
 // reconcileSyncSchedules keeps DataSync/ResourceSync schedule in sync with latest referenced policies
@@ -573,7 +590,7 @@ func (r *DisasterInstanceReconciler) handleProtected(ctx context.Context, log lo
 	if handled, err := r.guardByRoleDrift(ctx, log, instance); err != nil {
 		return ctrl.Result{}, err
 	} else if handled {
-		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: instanceFailedRequeue()}, nil
 	}
 
 	// 更新可用操作
@@ -587,7 +604,7 @@ func (r *DisasterInstanceReconciler) handleProtected(ctx context.Context, log lo
 	}
 
 	// 在 Protected 状态下，定期检查子资源状态
-	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: instanceSteadyRequeue()}, nil
 }
 
 // handlePaused 处理 Paused 状态
@@ -601,7 +618,7 @@ func (r *DisasterInstanceReconciler) handlePaused(ctx context.Context, log logr.
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: instanceSteadyRequeue()}, nil
 }
 
 // handleFailingOver 处理 FailingOver 状态
@@ -629,12 +646,12 @@ func (r *DisasterInstanceReconciler) handleFailingOver(ctx context.Context, log 
 				return ctrl.Result{}, err
 			}
 		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: instanceInitializingRequeue()}, nil
 	}
 
 	if snapshot.latestTerminal == nil {
 		if !transitionWatchdogExceeded(instance, snapshot.latestObservedTime) {
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: instanceInitializingRequeue()}, nil
 		}
 		if err := r.updateInstanceStatusWithRetry(ctx, instance, func(latest *disasterv1.DisasterInstance) bool {
 			if latest.Status.FsmState != disasterv1.FsmStateFailingOver {
@@ -651,7 +668,7 @@ func (r *DisasterInstanceReconciler) handleFailingOver(ctx context.Context, log 
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: instanceSteadyRequeue()}, nil
 	}
 
 	if failoverRecoveredByAutoCancel(snapshot.latestTerminal) {
@@ -712,10 +729,10 @@ func (r *DisasterInstanceReconciler) handleFailingOver(ctx context.Context, log 
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: instanceFailedRequeue()}, nil
 	}
 
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: instanceInitializingRequeue()}, nil
 }
 
 type operationWatchdogSnapshot struct {
@@ -767,12 +784,13 @@ func isOperationInFlight(state disasterv1.OperationState) bool {
 }
 
 func transitionWatchdogTimeout(instance *disasterv1.DisasterInstance) time.Duration {
-	timeout := defaultTransitionWatchdogTimeout
+	instanceCfg := instanceRuntime()
+	timeout := instanceCfg.TransitionWatchdogTimeout
 	if instance != nil && instance.Spec.OperationTimeoutMinutes > 0 {
 		timeout = time.Duration(instance.Spec.OperationTimeoutMinutes) * time.Minute
 	}
-	if timeout < minTransitionWatchdogTimeout {
-		timeout = minTransitionWatchdogTimeout
+	if timeout < instanceCfg.MinTransitionWatchdogTimeout {
+		timeout = instanceCfg.MinTransitionWatchdogTimeout
 	}
 	return timeout
 }
@@ -905,7 +923,7 @@ func (r *DisasterInstanceReconciler) handleActive(ctx context.Context, log logr.
 	if handled, err := r.guardByRoleDrift(ctx, log, instance); err != nil {
 		return ctrl.Result{}, err
 	} else if handled {
-		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: instanceSteadyRequeue()}, nil
 	}
 
 	helper.ClearStatusError(&instance.Status)
@@ -917,7 +935,7 @@ func (r *DisasterInstanceReconciler) handleActive(ctx context.Context, log logr.
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: instanceSteadyRequeue()}, nil
 }
 
 // handleFailingBack 处理 FailingBack 状态
@@ -944,12 +962,12 @@ func (r *DisasterInstanceReconciler) handleFailingBack(ctx context.Context, log 
 				return ctrl.Result{}, err
 			}
 		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: instanceInitializingRequeue()}, nil
 	}
 
 	if snapshot.latestTerminal == nil {
 		if !transitionWatchdogExceeded(instance, snapshot.latestObservedTime) {
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: instanceInitializingRequeue()}, nil
 		}
 		if err := r.updateInstanceStatusWithRetry(ctx, instance, func(latest *disasterv1.DisasterInstance) bool {
 			if latest.Status.FsmState != disasterv1.FsmStateFailingBack {
@@ -966,7 +984,7 @@ func (r *DisasterInstanceReconciler) handleFailingBack(ctx context.Context, log 
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: instanceFailedRequeue()}, nil
 	}
 
 	switch snapshot.latestTerminal.Status.State {
@@ -999,10 +1017,10 @@ func (r *DisasterInstanceReconciler) handleFailingBack(ctx context.Context, log 
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: instanceFailedRequeue()}, nil
 	}
 
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: instanceInitializingRequeue()}, nil
 }
 
 // handleConfigError is intentionally conservative: recovery is handled by guardByConfigHealth.
@@ -1039,7 +1057,7 @@ func (r *DisasterInstanceReconciler) handleFailed(ctx context.Context, log logr.
 			if err := r.Status().Update(ctx, instance); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: instanceFailedRequeue()}, nil
 		}
 	}
 
@@ -1097,7 +1115,7 @@ func (r *DisasterInstanceReconciler) handleFailed(ctx context.Context, log logr.
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: instanceFailedRequeue()}, nil
 }
 
 func isRecoverableSyncFailureReason(reason string) bool {

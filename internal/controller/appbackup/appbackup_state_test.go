@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/softcdata/testudo-operator/internal/controller"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	. "github.com/softcdata/testudo-operator/pkg/metadata"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -276,6 +277,37 @@ var _ = Describe("AppBackup State Machine", func() {
 				Expect(appBackup.Status.BackupStatus.Phase).To(Equal(velerov1.BackupPhaseCompleted))
 				Expect(len(appBackup.Status.History)).To(Equal(1))
 				Expect(appBackup.Status.History[0].Name).To(Equal("backup-1"))
+			})
+
+			It("should use runtime poll interval while latest backup is running", func() {
+				runtimecfg.ResetForTest()
+				DeferCleanup(runtimecfg.ResetForTest)
+
+				snapshot := runtimecfg.DefaultSnapshot()
+				snapshot.BackupRuntime.PollInterval = 3 * time.Second
+				runtimecfg.Activate(snapshot)
+
+				backup := &velerov1.Backup{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "backup-running",
+						Namespace: VeleroNamespace,
+						Labels: map[string]string{
+							LabelAppBackupUID: string(appBackup.UID),
+						},
+						CreationTimestamp: metav1.Now(),
+					},
+					Status: velerov1.BackupStatus{
+						Phase: velerov1.BackupPhaseInProgress,
+					},
+				}
+				Expect(remoteClient.Create(ctx, backup)).To(Succeed())
+
+				handler := &ReadyHandler{}
+				phase, res, err := handler.Handle(ctx, r, appBackup)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(phase).To(Equal(PhaseReady))
+				Expect(appBackup.Status.LatestBackupStatus).To(Equal(disasterv1.LastBackupStatusInProgress))
+				Expect(res.RequeueAfter).To(Equal(3 * time.Second))
 			})
 		})
 

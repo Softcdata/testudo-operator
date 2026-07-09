@@ -42,6 +42,7 @@ import (
 
 	"github.com/softcdata/testudo-operator/internal/controller/imagemapping"
 	"github.com/softcdata/testudo-operator/internal/controller/restore"
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	"github.com/softcdata/testudo-operator/pkg/helper"
 	metadata "github.com/softcdata/testudo-operator/pkg/metadata"
@@ -80,6 +81,18 @@ const (
 
 	defaultOperationTimeoutMinutes int32 = 60
 )
+
+func operationDefaultTimeoutMinutes() int32 {
+	return runtimecfg.SnapshotCurrent().OperationRuntime.DefaultTimeoutMinutes
+}
+
+func operationStepStartRequeue() time.Duration {
+	return runtimecfg.SnapshotCurrent().OperationRuntime.StepStartRequeue
+}
+
+func operationStepRunningRequeue() time.Duration {
+	return runtimecfg.SnapshotCurrent().OperationRuntime.StepRunningRequeue
+}
 
 // resolveWaitUntilReady resolves whether readiness validation should be enabled for this operation.
 // Priority:
@@ -558,7 +571,7 @@ func (r *DisasterOperationReconciler) handleFailoverAutoCancelPath(
 			if err := r.Status().Update(ctx, operation); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: operationStepStartRequeue()}, nil
 		}
 
 		if step.State == "Running" {
@@ -584,7 +597,7 @@ func (r *DisasterOperationReconciler) handleFailoverAutoCancelPath(
 						return ctrl.Result{}, err
 					}
 				}
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+				return ctrl.Result{RequeueAfter: operationStepRunningRequeue()}, nil
 			}
 
 			now := metav1.Now()
@@ -1131,7 +1144,7 @@ func (r *DisasterOperationReconciler) handleFailover(ctx context.Context, log lo
 			if err := r.Status().Update(ctx, operation); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: operationStepStartRequeue()}, nil
 		}
 
 		if step.State == "Running" {
@@ -1164,7 +1177,7 @@ func (r *DisasterOperationReconciler) handleFailover(ctx context.Context, log lo
 					}
 				}
 				// 未完成，稍后重试
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+				return ctrl.Result{RequeueAfter: operationStepRunningRequeue()}, nil
 			}
 
 			// 完成步骤
@@ -1399,7 +1412,7 @@ func (r *DisasterOperationReconciler) handleReprotect(ctx context.Context, log l
 			if err := r.Status().Update(ctx, operation); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: operationStepStartRequeue()}, nil
 		}
 
 		if step.State == "Running" {
@@ -1437,7 +1450,7 @@ func (r *DisasterOperationReconciler) handleReprotect(ctx context.Context, log l
 			}
 
 			if !completed {
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+				return ctrl.Result{RequeueAfter: operationStepRunningRequeue()}, nil
 			}
 
 			step.State = "Completed"
@@ -1828,7 +1841,7 @@ func (r *DisasterOperationReconciler) handleSync(ctx context.Context, log logr.L
 		operation.Status.Message = fmt.Sprintf("等待同步完成: %s", strings.Join(pendingInfo, ", "))
 		r.reportOperationProgress(ctx, operation, instance, operation.Status.Message)
 		r.Status().Update(ctx, operation)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: operationStepRunningRequeue()}, nil
 	}
 
 	// 所有同步已完成
@@ -2798,7 +2811,7 @@ func (r *DisasterOperationReconciler) handleDrill(ctx context.Context, log logr.
 			helper.ReportDiagnosticEventf(r.Recorder, operation, "Normal", "StepStarted", "步骤 %s 已开始", step.Name)
 			r.reportOperationProgress(ctx, operation, instance, fmt.Sprintf("步骤 %s 已开始", step.Name))
 			r.Status().Update(ctx, operation)
-			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: operationStepStartRequeue()}, nil
 		}
 		if step.State == "Running" {
 			completed, err := r.executeDrillStep(ctx, log, step, instance, operation, targetCluster, restoreMode)
@@ -2813,7 +2826,7 @@ func (r *DisasterOperationReconciler) handleDrill(ctx context.Context, log logr.
 				return ctrl.Result{}, nil
 			}
 			if !completed {
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+				return ctrl.Result{RequeueAfter: operationStepRunningRequeue()}, nil
 			}
 			step.State = "Completed"
 			step.CompletionTime = &metav1.Time{Time: time.Now()}
@@ -3118,6 +3131,59 @@ func resolveDrillDataRestoreHooks(instance *disasterv1.DisasterInstance, drillCo
 	return instance.Spec.VeleroHooks.DataRestore
 }
 
+func makeDrillTrafficlessModifiersFromDataSync(dataSync *disasterv1.DataSync) []disasterv1.ResourceModifierRule {
+	if dataSync == nil || dataSync.Spec.TrafficlessConfig == nil {
+		return nil
+	}
+
+	image := strings.TrimSpace(dataSync.Spec.TrafficlessConfig.Image)
+	command := dataSync.Spec.TrafficlessConfig.Command
+	if image == "" && len(command) == 0 {
+		return nil
+	}
+	if image == "" {
+		image = "busybox:1.36"
+	}
+	if len(command) == 0 {
+		command = []string{"sleep", "3600"}
+	}
+	commandJSON, err := json.Marshal(command)
+	if err != nil {
+		commandJSON = []byte(`["sleep","3600"]`)
+	}
+
+	return []disasterv1.ResourceModifierRule{{
+		Conditions: disasterv1.Conditions{GroupResource: "pods"},
+		Patches: []disasterv1.JSONPatch{
+			{
+				Operation: "add",
+				Path:      "/metadata/labels",
+				Value:     `{"trafficless": "true"}`,
+			},
+			{
+				Operation: "add",
+				Path:      "/metadata/ownerReferences",
+				Value:     "[]",
+			},
+			{
+				Operation: "replace",
+				Path:      "/spec/containers/0/image",
+				Value:     image,
+			},
+			{
+				Operation: "add",
+				Path:      "/spec/containers/0/command",
+				Value:     string(commandJSON),
+			},
+			{
+				Operation: "add",
+				Path:      "/spec/containers/0/args",
+				Value:     "[]",
+			},
+		},
+	}}
+}
+
 // executeDrillRestoreData 执行数据恢复步骤 (从 DataSync 备份恢复 PVC 数据)
 func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Context, log logr.Logger, instance *disasterv1.DisasterInstance, operation *disasterv1.DisasterOperation, targetCluster string) (bool, error) {
 	log.Info("执行 Drill 数据恢复步骤", "targetCluster", targetCluster)
@@ -3196,18 +3262,21 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 	)
 	hasRestorePolicy := instance.Spec.RestorePolicy != nil || drillRestorePolicy != nil
 
+	dataModifiers := makeDrillTrafficlessModifiersFromDataSync(dataSync)
+
 	// 使用共享构建器
 	restoreSpec := restore.BuildAppRestoreSpec(restore.BuilderConfig{
-		RestoreType:        restore.RestoreTypeData,
-		BackupSource:       dataSync.Status.LastBackupName,
-		BackupName:         dataSync.Status.LastBackupName,
-		TargetCluster:      targetCluster,
-		SourceCluster:      instance.Status.PrimaryCluster,
-		StorageRepository:  config.Spec.StorageRepository,
-		IncludedNamespaces: instance.Spec.Namespaces,
-		NamespaceMapping:   namespaceMapping,
-		IsForDrill:         true,
-		DataRestoreHooks:   preparedDrillDataRestoreHooks,
+		RestoreType:               restore.RestoreTypeData,
+		BackupSource:              dataSync.Status.LastBackupName,
+		BackupName:                dataSync.Status.LastBackupName,
+		TargetCluster:             targetCluster,
+		SourceCluster:             instance.Status.PrimaryCluster,
+		StorageRepository:         config.Spec.StorageRepository,
+		IncludedNamespaces:        instance.Spec.Namespaces,
+		NamespaceMapping:          namespaceMapping,
+		IsForDrill:                true,
+		DataResourceModifierRules: dataModifiers,
+		DataRestoreHooks:          preparedDrillDataRestoreHooks,
 	})
 	if len(hookMarkerRules) > 0 && !hasRestorePolicy {
 		restoreSpec.ResourceModifierRules = append(restoreSpec.ResourceModifierRules, hookMarkerRules...)
@@ -3457,7 +3526,7 @@ func (r *DisasterOperationReconciler) handleCancel(ctx context.Context, log logr
 			operation.Status.CurrentStep = step.Name
 			log.Info("开始 Cancel 步骤", "step", step.Name)
 			r.Status().Update(ctx, operation)
-			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: operationStepStartRequeue()}, nil
 		}
 		if step.State == "Running" {
 			timeoutMinutes := effectiveOperationTimeoutMinutes(operation, instance)
@@ -3490,7 +3559,7 @@ func (r *DisasterOperationReconciler) handleCancel(ctx context.Context, log logr
 				return ctrl.Result{}, nil
 			}
 			if !completed {
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+				return ctrl.Result{RequeueAfter: operationStepRunningRequeue()}, nil
 			}
 			step.State = "Completed"
 			step.CompletionTime = &metav1.Time{Time: time.Now()}
@@ -3580,7 +3649,7 @@ func effectiveOperationTimeoutMinutes(operation *disasterv1.DisasterOperation, i
 	if instance != nil && instance.Spec.OperationTimeoutMinutes > 0 {
 		return instance.Spec.OperationTimeoutMinutes
 	}
-	return defaultOperationTimeoutMinutes
+	return operationDefaultTimeoutMinutes()
 }
 
 func (r *DisasterOperationReconciler) executeCancelStep(ctx context.Context, log logr.Logger, step *disasterv1.StepStatus, instance *disasterv1.DisasterInstance, operation *disasterv1.DisasterOperation) (bool, error) {
@@ -3650,7 +3719,7 @@ func (r *DisasterOperationReconciler) handleUndo(ctx context.Context, log logr.L
 			helper.ReportDiagnosticEventf(r.Recorder, operation, "Normal", "StepStarted", "步骤 %s 已开始", step.Name)
 			r.reportOperationProgress(ctx, operation, instance, fmt.Sprintf("步骤 %s 已开始", step.Name))
 			r.Status().Update(ctx, operation)
-			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: operationStepStartRequeue()}, nil
 		}
 		if step.State == "Running" {
 			if operation.Spec.TimeoutMinutes > 0 && step.StartTime != nil {
@@ -3682,7 +3751,7 @@ func (r *DisasterOperationReconciler) handleUndo(ctx context.Context, log logr.L
 				return ctrl.Result{}, nil
 			}
 			if !completed {
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+				return ctrl.Result{RequeueAfter: operationStepRunningRequeue()}, nil
 			}
 			step.State = "Completed"
 			step.CompletionTime = &metav1.Time{Time: time.Now()}
@@ -4049,7 +4118,7 @@ func (r *DisasterOperationReconciler) handleGroupOperation(ctx context.Context, 
 			log.V(1).Info("更新进度消息失败（非致命）", "error", err)
 		}
 	}
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: operationStepRunningRequeue()}, nil
 }
 
 // ==================== Helper Functions for Explicit Cluster Operations ====================

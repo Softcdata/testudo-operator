@@ -508,5 +508,68 @@ var _ = Describe("ResourceSync Controller", func() {
 			Expect(updated.Status.Reason).To(Equal(resourceSyncReasonBackupFailed))
 			Expect(updated.Status.Message).To(ContainSubstring("did not report a Velero phase"))
 		})
+
+		It("应该将实例级操作超时投递到 AppBackup", func() {
+			config := &disasterv1.DisasterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "default"},
+				Spec: disasterv1.DisasterConfigSpec{
+					SourceCluster:     "cluster-A",
+					TargetCluster:     "cluster-B",
+					StorageRepository: "good-sr",
+				},
+			}
+			instance := &disasterv1.DisasterInstance{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-instance", Namespace: "default"},
+				Spec: disasterv1.DisasterInstanceSpec{
+					Config:                  "test-config",
+					Namespaces:              []string{"app-ns"},
+					OperationTimeoutMinutes: 180,
+				},
+			}
+			resourceSync := &disasterv1.ResourceSync{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-rs",
+					Namespace:  "default",
+					Finalizers: []string{"testudo.softcdata.com/resourcesync-finalizer"},
+				},
+				Spec: disasterv1.ResourceSyncSpec{
+					Instance: "test-instance",
+					Trigger:  disasterv1.TriggerSpec{Schedule: "*/1 * * * *"},
+				},
+				Status: disasterv1.ResourceSyncStatus{
+					State: disasterv1.ResourceSyncStateInProgress,
+				},
+			}
+			storage := &disasterv1.StorageRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: "good-sr", Namespace: "disaster-system"},
+				Status: disasterv1.StorageRepositoryStatus{
+					Status: disasterv1.StorageRepositoryStatusAvailable,
+				},
+			}
+
+			fakeClient = fake.NewClientBuilder().
+				WithScheme(s).
+				WithObjects(resourceSync, instance, config, storage).
+				WithStatusSubresource(resourceSync).
+				Build()
+
+			r = &ResourceSyncReconciler{
+				Client:    fakeClient,
+				Scheme:    s,
+				Log:       ctrl.Log.WithName("test"),
+				Recorder:  recorder,
+				Scheduler: syncScheduler,
+			}
+
+			_, err := r.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: "test-rs", Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			backup := &disasterv1.AppBackup{}
+			Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "rs-test-rs", Namespace: "default"}, backup)).To(Succeed())
+			Expect(backup.Spec.Timeout).NotTo(BeNil())
+			Expect(backup.Spec.Timeout.Duration).To(Equal(180 * time.Minute))
+		})
 	})
 })

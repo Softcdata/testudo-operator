@@ -494,6 +494,34 @@ func collectImageRewriteObjects(
 			})
 		}
 
+		replicaSets := &appsv1.ReplicaSetList{}
+		if err := sourceClient.List(ctx, replicaSets, opts...); err != nil {
+			return nil, fmt.Errorf("list replicasets in %s: %w", namespace, err)
+		}
+		for i := range replicaSets.Items {
+			obj := replicaSets.Items[i]
+			objects = append(objects, imageRewriteObject{
+				groupResource: "replicasets.apps",
+				namespace:     obj.Namespace,
+				name:          obj.Name,
+				images:        collectPodSpecImages("/spec/template/spec", obj.Spec.Template.Spec),
+			})
+		}
+
+		replicationControllers := &corev1.ReplicationControllerList{}
+		if err := sourceClient.List(ctx, replicationControllers, opts...); err != nil {
+			return nil, fmt.Errorf("list replicationcontrollers in %s: %w", namespace, err)
+		}
+		for i := range replicationControllers.Items {
+			obj := replicationControllers.Items[i]
+			objects = append(objects, imageRewriteObject{
+				groupResource: "replicationcontrollers",
+				namespace:     obj.Namespace,
+				name:          obj.Name,
+				images:        collectPodSpecImages("/spec/template/spec", obj.Spec.Template.Spec),
+			})
+		}
+
 		jobs := &batchv1.JobList{}
 		if err := sourceClient.List(ctx, jobs, opts...); err != nil {
 			return nil, fmt.Errorf("list jobs in %s: %w", namespace, err)

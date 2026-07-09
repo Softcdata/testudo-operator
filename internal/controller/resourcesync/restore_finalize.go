@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	"github.com/softcdata/testudo-operator/pkg/helper"
 )
@@ -141,7 +142,7 @@ func appendResourceSyncHistory(
 	}
 
 	resourceSync.Status.History = append(resourceSync.Status.History, record)
-	if len(resourceSync.Status.History) > 20 {
-		resourceSync.Status.History = resourceSync.Status.History[len(resourceSync.Status.History)-20:]
+	if retention := runtimecfg.SnapshotCurrent().SyncRuntime.HistoryRetention; len(resourceSync.Status.History) > retention {
+		resourceSync.Status.History = resourceSync.Status.History[len(resourceSync.Status.History)-retention:]
 	}
 }
