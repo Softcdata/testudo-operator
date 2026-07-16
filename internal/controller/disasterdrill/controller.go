@@ -39,13 +39,15 @@ import (
 const (
 	drillFinalizer = "testudo.softcdata.com/disasterdrill-finalizer"
 
-	drillReasonValidationFailed = "ValidationFailed"
-	drillReasonTopologyChanged  = "TopologyChanged"
-	drillReasonOperationMissing = "OperationNotFound"
-	drillReasonCleanupFailed    = "CleanupFailed"
-	drillReasonOperationFailed  = "OperationFailed"
-	drillReasonInternalError    = "InternalError"
-	drillReasonDrillFailed      = "DrillFailed"
+	drillReasonValidationFailed   = "ValidationFailed"
+	drillReasonTopologyChanged    = "TopologyChanged"
+	drillReasonOperationMissing   = "OperationNotFound"
+	drillReasonCleanupFailed      = "CleanupFailed"
+	drillReasonOperationFailed    = "OperationFailed"
+	drillReasonInternalError      = "InternalError"
+	drillReasonDrillFailed        = "DrillFailed"
+	drillReasonBackupUnavailable  = "BackupUnavailable"
+	drillReasonBackupStateChanged = "BackupStateChanged"
 )
 
 // DisasterDrillReconciler reconciles a DisasterDrill object
@@ -169,6 +171,8 @@ func containsAny(message string, parts ...string) bool {
 // +kubebuilder:rbac:groups=testudo.softcdata.com,resources=disasteroperations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=testudo.softcdata.com,resources=disasterinstances,verbs=get;list;watch
 // +kubebuilder:rbac:groups=testudo.softcdata.com,resources=clusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups=testudo.softcdata.com,resources=datasyncs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=testudo.softcdata.com,resources=resourcesyncs,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *DisasterDrillReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -297,8 +301,14 @@ func (r *DisasterDrillReconciler) handlePending(ctx context.Context, log logr.Lo
 	}
 
 	if validationErr != nil {
+		if drill.Status.ValidationResults == nil {
+			drill.Status.ValidationResults = &disasterv1.DrillValidationResults{}
+		}
 		drill.Status.State = disasterv1.DrillStateFailed
 		drill.Status.Message = validationErr.Error()
+		if drill.Status.Reason == "" {
+			drill.Status.Reason = drillReasonValidationFailed
+		}
 		drill.Status.ValidationResults.ClusterReachable = false // 简单标记
 		r.Recorder.Event(drill, "Warning", "ValidationFailed", drill.Status.Message)
 		r.reportDrillFinished(ctx, drill, fmt.Sprintf("创建演练 %s", drill.Name), drill.Spec.TargetCluster, helper.TaskStatusFailed, drill.Status.Message)
@@ -307,7 +317,6 @@ func (r *DisasterDrillReconciler) handlePending(ctx context.Context, log logr.Lo
 
 	drill.Status.TargetCluster = targetCluster
 	drill.Status.ValidationResults.ClusterReachable = true
-	drill.Status.ValidationResults.BackupAvailable = true // 简化假设，实际应检查所有实例
 
 	// 5. 校验目标集群可达性 (仅当指定了明确的单集群时)
 	if targetCluster != "" && targetCluster != "(Auto)" {
@@ -315,6 +324,7 @@ func (r *DisasterDrillReconciler) handlePending(ctx context.Context, log logr.Lo
 		if err := r.Get(ctx, client.ObjectKey{Name: targetCluster}, cluster); err != nil {
 			if errors.IsNotFound(err) {
 				drill.Status.State = disasterv1.DrillStateFailed
+				drill.Status.Reason = drillReasonValidationFailed
 				drill.Status.Message = fmt.Sprintf("目标集群 %s 未找到", targetCluster)
 				drill.Status.ValidationResults.ClusterReachable = false
 				r.Recorder.Event(drill, "Warning", "ValidationFailed", drill.Status.Message)
@@ -325,6 +335,7 @@ func (r *DisasterDrillReconciler) handlePending(ctx context.Context, log logr.Lo
 		if cluster.Status.Status != "Ready" {
 			if !drill.Spec.SkipValidation {
 				drill.Status.State = disasterv1.DrillStateFailed
+				drill.Status.Reason = drillReasonValidationFailed
 				drill.Status.Message = fmt.Sprintf("目标集群 %s 状态不是 Ready，当前: %s", targetCluster, cluster.Status.Status)
 				drill.Status.ValidationResults.ClusterReachable = false
 				r.Recorder.Event(drill, "Warning", "ValidationFailed", drill.Status.Message)
@@ -333,11 +344,9 @@ func (r *DisasterDrillReconciler) handlePending(ctx context.Context, log logr.Lo
 		}
 	}
 
-	// 6. 演练始终使用完整恢复模式
-	drill.Status.RestoreMode = disasterv1.RestoreModeFullRestore
-
-	// 7. 校验通过，进入 Ready 状态
+	// 6. 校验通过，进入 Ready 状态
 	drill.Status.State = disasterv1.DrillStateReady
+	drill.Status.Reason = ""
 	drill.Status.ReadyTime = &metav1.Time{Time: time.Now()}
 	drill.Status.Message = "演练已就绪，请设置 spec.confirmed=true 开始执行"
 	r.Recorder.Event(drill, "Normal", "Ready", "校验通过，等待用户确认")
@@ -379,6 +388,27 @@ func (r *DisasterDrillReconciler) handleReady(ctx context.Context, log logr.Logg
 		}
 	}
 
+	modeSnapshotChanged, reason, err := r.refreshRestoreModeSnapshot(ctx, drill)
+	if err != nil {
+		drill.Status.State = disasterv1.DrillStateFailed
+		drill.Status.Reason = reason
+		drill.Status.CompletionTime = &metav1.Time{Time: time.Now()}
+		drill.Status.Message = fmt.Sprintf("执行前备份复核失败: %v", err)
+		if drill.Status.ValidationResults == nil {
+			drill.Status.ValidationResults = &disasterv1.DrillValidationResults{}
+		}
+		drill.Status.ValidationResults.BackupAvailable = false
+		r.Recorder.Event(drill, "Warning", "BackupValidationFailed", drill.Status.Message)
+		r.reportDrillFinished(ctx, drill, fmt.Sprintf("执行演练 %s", drill.Name), drill.Status.TargetCluster, helper.TaskStatusFailed, drill.Status.Message)
+		return ctrl.Result{}, r.Status().Update(ctx, drill)
+	}
+	if modeSnapshotChanged {
+		if err := r.Status().Update(ctx, drill); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	// 防止重复创建 (通过 Label 查找已存在的 Operation)
 	var op *disasterv1.DisasterOperation
 	opList := &disasterv1.DisasterOperationList{}
@@ -403,6 +433,24 @@ func (r *DisasterDrillReconciler) handleReady(ctx context.Context, log logr.Logg
 		// 创建 DisasterOperation (使用带时间戳的名称避免重复)
 		opName := fmt.Sprintf("drill-%s-%d", drill.Name, time.Now().Unix())
 
+		drillConfig := &disasterv1.DrillConfig{
+			TargetCluster: func() string {
+				if drill.Status.TargetCluster == "(Auto)" {
+					return ""
+				}
+				return drill.Status.TargetCluster
+			}(),
+			NamespaceMapping: drill.Spec.NamespaceMapping,
+			SkipValidation:   drill.Spec.SkipValidation,
+			RestorePolicy:    drill.Spec.RestorePolicy,
+			VeleroHooks:      drill.Spec.VeleroHooks,
+		}
+		if drill.Spec.InstanceName != "" {
+			drillConfig.RestoreMode = drill.Status.InstanceRestoreModes[drill.Spec.InstanceName]
+		} else {
+			drillConfig.InstanceRestoreModes = cloneRestoreModes(drill.Status.InstanceRestoreModes)
+		}
+
 		op = &disasterv1.DisasterOperation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      opName,
@@ -418,18 +466,7 @@ func (r *DisasterDrillReconciler) handleReady(ctx context.Context, log logr.Logg
 				InstanceName:  drill.Spec.InstanceName, // 空 if Group
 				GroupName:     drill.Spec.GroupName,    // 空 if Instance
 				OperationType: disasterv1.OperationTypeDrill,
-				DrillConfig: &disasterv1.DrillConfig{
-					TargetCluster: func() string {
-						if drill.Status.TargetCluster == "(Auto)" {
-							return ""
-						}
-						return drill.Status.TargetCluster
-					}(),
-					NamespaceMapping: drill.Spec.NamespaceMapping,
-					SkipValidation:   drill.Spec.SkipValidation,
-					RestorePolicy:    drill.Spec.RestorePolicy,
-					VeleroHooks:      drill.Spec.VeleroHooks,
-				},
+				DrillConfig:   drillConfig,
 				Directive: &disasterv1.OperationDirective{
 					Confirmed: true,
 				},
@@ -752,6 +789,14 @@ func (r *DisasterDrillReconciler) validateInstanceDrill(ctx context.Context, dri
 	drill.Status.ValidationResults.InstanceValid = true
 	drill.Status.ValidationResults.LastDataSyncTime = instance.Status.LastDataSyncTime
 	drill.Status.ValidationResults.LastResourceSyncTime = instance.Status.LastResourceSyncTime
+	mode, err := r.resolveInstanceRestoreMode(ctx, instance)
+	if err != nil {
+		drill.Status.ValidationResults.BackupAvailable = false
+		drill.Status.Reason = drillReasonBackupUnavailable
+		return "", err
+	}
+	drill.Status.ValidationResults.BackupAvailable = true
+	setDrillRestoreModeSnapshot(drill, map[string]disasterv1.RestoreMode{instance.Name: mode})
 
 	// 确定目标集群
 	targetCluster := drill.Spec.TargetCluster
@@ -784,6 +829,7 @@ func (r *DisasterDrillReconciler) validateGroupDrill(ctx context.Context, drill 
 
 	targetCluster := drill.Spec.TargetCluster
 	noMapping := len(drill.Spec.NamespaceMapping) == 0
+	restoreModes := make(map[string]disasterv1.RestoreMode)
 
 	// 遍历组内所有实例进行安全校验
 	for _, level := range group.Spec.Levels {
@@ -808,8 +854,25 @@ func (r *DisasterDrillReconciler) validateGroupDrill(ctx context.Context, drill 
 				warnMsg := fmt.Sprintf("注意：实例 %s 的演练环境与生产备环境 (%s) 重合且未配置映射，演练恢复将覆盖备用环境", instanceName, instTarget)
 				r.Recorder.Event(drill, "Warning", "NoNamespaceMapping", warnMsg)
 			}
+
+			if _, exists := restoreModes[instanceName]; !exists {
+				mode, err := r.resolveInstanceRestoreMode(ctx, instance)
+				if err != nil {
+					drill.Status.ValidationResults.BackupAvailable = false
+					drill.Status.Reason = drillReasonBackupUnavailable
+					return "", err
+				}
+				restoreModes[instanceName] = mode
+			}
 		}
 	}
+	if len(restoreModes) == 0 {
+		drill.Status.ValidationResults.BackupAvailable = false
+		drill.Status.Reason = drillReasonBackupUnavailable
+		return "", fmt.Errorf("容灾组 %s 不包含可演练实例", group.Name)
+	}
+	drill.Status.ValidationResults.BackupAvailable = true
+	setDrillRestoreModeSnapshot(drill, restoreModes)
 
 	// 如果指定了统一目标集群，返回该集群。否则返回 (Auto) 表示跟随实例各自配置
 	if targetCluster == "" {

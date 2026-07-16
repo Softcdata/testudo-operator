@@ -220,6 +220,11 @@ func TestBuildAppRestoreSpec_ScopedNamespacePhaseUsesUpdateAndMandatoryExclusion
 	if !equalStrings(spec.Template.ExcludedResources, []string{"configmaps", "pods", "persistentvolumeclaims", "persistentvolumes"}) {
 		t.Fatalf("unexpected namespace phase excluded resources: %v", spec.Template.ExcludedResources)
 	}
+	if hasResourceSyncPatchPath(spec.ResourceModifierRules, "/spec/nodeName") ||
+		hasResourceSyncPatchPath(spec.ResourceModifierRules, "/spec/nodeSelector") ||
+		hasResourceSyncPatchPath(spec.ResourceModifierRules, "/spec/affinity") {
+		t.Fatalf("ResourceSync restore must not include DataSync-only scheduling cleanup: %#v", spec.ResourceModifierRules)
+	}
 }
 
 func TestHandleRestore_CreatesClusterPhaseBeforeNamespacePhase(t *testing.T) {
@@ -411,4 +416,15 @@ func equalStrings(a []string, b []string) bool {
 		}
 	}
 	return true
+}
+
+func hasResourceSyncPatchPath(rules []disasterv1.ResourceModifierRule, path string) bool {
+	for _, rule := range rules {
+		for _, patch := range rule.Patches {
+			if patch.Path == path {
+				return true
+			}
+		}
+	}
+	return false
 }

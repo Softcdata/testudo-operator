@@ -12,6 +12,7 @@ import (
 	"github.com/softcdata/testudo-operator/internal/controller/scheduler"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -289,17 +290,24 @@ func TestReconcile_AlignsExistingAppBackupHooksBeforeNextBackup(t *testing.T) {
 		WithObjects(ds, instance, config, storage, existingBackup).
 		WithStatusSubresource(ds).
 		Build()
+	sourceClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(&corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "data", Namespace: "app"},
+		}).
+		Build()
 	syncScheduler, err := scheduler.NewSyncScheduler()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = syncScheduler.Shutdown() }()
 	r := &DataSyncReconciler{
-		Client:    c,
-		Scheme:    s,
-		Log:       ctrl.Log.WithName("test"),
-		Recorder:  record.NewFakeRecorder(16),
-		Scheduler: syncScheduler,
+		Client:              c,
+		Scheme:              s,
+		Log:                 ctrl.Log.WithName("test"),
+		Recorder:            record.NewFakeRecorder(16),
+		Scheduler:           syncScheduler,
+		SourceClientFactory: &ctrlcommon.MockClientFactory{MockClient: sourceClient},
 	}
 
 	_, err = r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: "demo", Namespace: "default"}})

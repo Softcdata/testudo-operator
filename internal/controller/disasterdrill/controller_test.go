@@ -68,8 +68,28 @@ var _ = Describe("DisasterDrill Controller", func() {
 				FsmState:         disasterv1.FsmStateProtected,
 				PrimaryCluster:   primary,
 				SecondaryCluster: secondary,
+				DataSyncName:     "dr-ds-" + name,
+				ResourceSyncName: "dr-rs-" + name,
 			},
 		}
+	}
+
+	createFullRestoreSyncs := func(instance *disasterv1.DisasterInstance) (*disasterv1.DataSync, *disasterv1.ResourceSync) {
+		return &disasterv1.DataSync{
+				ObjectMeta: metav1.ObjectMeta{Name: instance.Status.DataSyncName, Namespace: instance.Namespace},
+				Spec:       disasterv1.DataSyncSpec{Instance: instance.Name},
+				Status: disasterv1.DataSyncStatus{
+					State:          disasterv1.DataSyncStateReady,
+					LastBackupName: "data-backup-" + instance.Name,
+				},
+			}, &disasterv1.ResourceSync{
+				ObjectMeta: metav1.ObjectMeta{Name: instance.Status.ResourceSyncName, Namespace: instance.Namespace},
+				Spec:       disasterv1.ResourceSyncSpec{Instance: instance.Name},
+				Status: disasterv1.ResourceSyncStatus{
+					State:          disasterv1.ResourceSyncStateReady,
+					LastBackupName: "resource-backup-" + instance.Name,
+				},
+			}
 	}
 
 	createTestGroup := func(name, namespace string, levels [][]string) *disasterv1.DisasterGroup {
@@ -98,6 +118,7 @@ var _ = Describe("DisasterDrill Controller", func() {
 	Describe("目标集群回退与安全检测", func() {
 		It("实例演练：不传目标集群时应自动回退到备集群，且未配置 NamespaceMapping 时仅警告不拦截", func() {
 			instance := createTestInstance("inst-1", "default", "cluster-A", "cluster-B")
+			dataSync, resourceSync := createFullRestoreSyncs(instance)
 			clusterB := createTestCluster("cluster-B")
 
 			// 演练：不指定 TargetCluster，不指定 NamespaceMapping
@@ -113,7 +134,7 @@ var _ = Describe("DisasterDrill Controller", func() {
 
 			fakeClient = fake.NewClientBuilder().
 				WithScheme(s).
-				WithObjects(instance, clusterB, drill).
+				WithObjects(instance, dataSync, resourceSync, clusterB, drill).
 				WithStatusSubresource(drill).
 				Build()
 
@@ -140,6 +161,8 @@ var _ = Describe("DisasterDrill Controller", func() {
 		It("容灾组演练：未配置 NamespaceMapping 时仅警告不拦截", func() {
 			inst1 := createTestInstance("inst-1", "default", "cluster-A", "cluster-B")
 			inst2 := createTestInstance("inst-2", "default", "cluster-X", "cluster-Y")
+			dataSync1, resourceSync1 := createFullRestoreSyncs(inst1)
+			dataSync2, resourceSync2 := createFullRestoreSyncs(inst2)
 			group := createTestGroup("group-1", "default", [][]string{{"inst-1", "inst-2"}})
 			clusterY := createTestCluster("cluster-Y")
 
@@ -157,7 +180,7 @@ var _ = Describe("DisasterDrill Controller", func() {
 
 			fakeClient = fake.NewClientBuilder().
 				WithScheme(s).
-				WithObjects(inst1, inst2, group, clusterY, drill).
+				WithObjects(inst1, inst2, dataSync1, resourceSync1, dataSync2, resourceSync2, group, clusterY, drill).
 				WithStatusSubresource(drill).
 				Build()
 
@@ -182,6 +205,7 @@ var _ = Describe("DisasterDrill Controller", func() {
 
 		It("容灾组演练：不传目标集群时应标记为 (Auto) 且通过安全查核 (若配置了映射)", func() {
 			inst1 := createTestInstance("inst-1", "default", "cluster-A", "cluster-B")
+			dataSync1, resourceSync1 := createFullRestoreSyncs(inst1)
 			group := createTestGroup("group-1", "default", [][]string{{"inst-1"}})
 			clusterB := createTestCluster("cluster-B")
 
@@ -200,7 +224,7 @@ var _ = Describe("DisasterDrill Controller", func() {
 
 			fakeClient = fake.NewClientBuilder().
 				WithScheme(s).
-				WithObjects(inst1, group, clusterB, drill).
+				WithObjects(inst1, dataSync1, resourceSync1, group, clusterB, drill).
 				WithStatusSubresource(drill).
 				Build()
 
@@ -335,6 +359,7 @@ var _ = Describe("DisasterDrill Controller", func() {
 	Describe("Drill RestorePolicy 透传", func() {
 		It("Ready+Confirmed 的演练应将 drill 级 restorePolicy 透传到 DisasterOperation", func() {
 			instance := createTestInstance("inst-1", "default", "cluster-A", "cluster-B")
+			dataSync, resourceSync := createFullRestoreSyncs(instance)
 			drill := &disasterv1.DisasterDrill{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "policy-drill",
@@ -368,14 +393,16 @@ var _ = Describe("DisasterDrill Controller", func() {
 					},
 				},
 				Status: disasterv1.DisasterDrillStatus{
-					State:         disasterv1.DrillStateReady,
-					TargetCluster: "cluster-B",
+					State:                disasterv1.DrillStateReady,
+					TargetCluster:        "cluster-B",
+					RestoreMode:          disasterv1.RestoreModeFullRestore,
+					InstanceRestoreModes: map[string]disasterv1.RestoreMode{"inst-1": disasterv1.RestoreModeFullRestore},
 				},
 			}
 
 			fakeClient = fake.NewClientBuilder().
 				WithScheme(s).
-				WithObjects(instance, drill).
+				WithObjects(instance, dataSync, resourceSync, drill).
 				WithStatusSubresource(drill).
 				Build()
 
@@ -404,6 +431,7 @@ var _ = Describe("DisasterDrill Controller", func() {
 
 		It("Ready+Confirmed 的演练应将空 veleroHooks 作为清空覆盖透传到 DisasterOperation", func() {
 			instance := createTestInstance("inst-1", "default", "cluster-A", "cluster-B")
+			dataSync, resourceSync := createFullRestoreSyncs(instance)
 			drill := &disasterv1.DisasterDrill{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "empty-hooks-drill",
@@ -418,14 +446,16 @@ var _ = Describe("DisasterDrill Controller", func() {
 					VeleroHooks:  &disasterv1.DisasterVeleroHooks{},
 				},
 				Status: disasterv1.DisasterDrillStatus{
-					State:         disasterv1.DrillStateReady,
-					TargetCluster: "cluster-B",
+					State:                disasterv1.DrillStateReady,
+					TargetCluster:        "cluster-B",
+					RestoreMode:          disasterv1.RestoreModeFullRestore,
+					InstanceRestoreModes: map[string]disasterv1.RestoreMode{"inst-1": disasterv1.RestoreModeFullRestore},
 				},
 			}
 
 			fakeClient = fake.NewClientBuilder().
 				WithScheme(s).
-				WithObjects(instance, drill).
+				WithObjects(instance, dataSync, resourceSync, drill).
 				WithStatusSubresource(drill).
 				Build()
 

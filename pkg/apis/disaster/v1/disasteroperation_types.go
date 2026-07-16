@@ -130,6 +130,15 @@ type DrillConfig struct {
 	// +optional
 	TargetCluster string `json:"targetCluster,omitempty"`
 
+	// RestoreMode 单实例或组子 Operation 使用的恢复模式
+	// +optional
+	// +kubebuilder:validation:Enum=FullRestore;ResourceOnly
+	RestoreMode RestoreMode `json:"restoreMode,omitempty"`
+
+	// InstanceRestoreModes 组父 Operation 向各实例子 Operation 传递的恢复模式
+	// +optional
+	InstanceRestoreModes map[string]RestoreMode `json:"instanceRestoreModes,omitempty"`
+
 	// NamespaceMapping 命名空间映射 (可选)
 	// 格式: 源命名空间 -> 目标命名空间
 	// +optional

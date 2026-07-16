@@ -11,6 +11,7 @@ import (
 	ctrlcommon "github.com/softcdata/testudo-operator/internal/controller"
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -143,6 +144,7 @@ func TestHandleRestore_SetHistoryOnBuildRestoreSpecFailed(t *testing.T) {
 	}
 	sourceCluster := &disasterv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "src-test"},
+		Status:     disasterv1.ClusterStatus{Status: disasterv1.ClusterStatusReady},
 		Spec: disasterv1.ClusterSpec{
 			Endpoint: "https://127.0.0.1:65530",
 			Token:    "dummy-token",
@@ -150,6 +152,7 @@ func TestHandleRestore_SetHistoryOnBuildRestoreSpecFailed(t *testing.T) {
 	}
 	targetCluster := &disasterv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "dst-test"},
+		Status:     disasterv1.ClusterStatus{Status: disasterv1.ClusterStatusReady},
 		Spec: disasterv1.ClusterSpec{
 			Endpoint: "https://127.0.0.1:65531",
 			Token:    "dummy-token",
@@ -162,10 +165,21 @@ func TestHandleRestore_SetHistoryOnBuildRestoreSpecFailed(t *testing.T) {
 		WithStatusSubresource(ds, backup).
 		Build()
 
+	targetClient := fake.NewClientBuilder().WithScheme(s).WithObjects(
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "velero", Namespace: ctrlcommon.VeleroNamespace},
+			Status:     appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1},
+		},
+		&appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-agent", Namespace: ctrlcommon.VeleroNamespace},
+			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberReady: 1},
+		},
+	).Build()
 	r := &DataSyncReconciler{
-		Client:   c,
-		Scheme:   s,
-		Recorder: record.NewFakeRecorder(10),
+		Client:              c,
+		Scheme:              s,
+		Recorder:            record.NewFakeRecorder(10),
+		TargetClientFactory: &ctrlcommon.MockClientFactory{MockClient: targetClient},
 	}
 
 	if _, err := r.handleRestore(context.Background(), logr.Discard(), ds, cfg, instance, "backup-1"); err != nil {
@@ -294,8 +308,8 @@ func TestHandleRestore_TreatsPartiallyFailedAppRestoreAsFailed(t *testing.T) {
 	if updated.Status.State != disasterv1.DataSyncStateFailed {
 		t.Fatalf("expected state Failed, got %s", updated.Status.State)
 	}
-	if updated.Status.Reason != dataSyncReasonRestoreFailed {
-		t.Fatalf("expected reason %s, got %s", dataSyncReasonRestoreFailed, updated.Status.Reason)
+	if updated.Status.Reason != "RestorePartiallyFailed" {
+		t.Fatalf("expected propagated AppRestore reason RestorePartiallyFailed, got %s", updated.Status.Reason)
 	}
 	if len(updated.Status.History) != 1 {
 		t.Fatalf("expected one history record, got %d", len(updated.Status.History))

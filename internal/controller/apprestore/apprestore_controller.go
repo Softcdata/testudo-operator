@@ -219,6 +219,21 @@ func (r *AppRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// 如果 Status 发生了变化，我们只更新 Status 并返回。
 	// 这会触发新的 Reconcile，在下一次循环中再处理 Metadata 的更新。
 	if !reflect.DeepEqual(original.Status, appRestore.Status) {
+		// The DataSync trafficless termination branch records the remote delete
+		// handshake in annotations. Persist that handshake before a phase change so
+		// a same-named Restore cannot be recreated between reconcile iterations.
+		if isDataSyncTrafficlessAppRestore(&appRestore) &&
+			(!reflect.DeepEqual(original.ObjectMeta.Labels, appRestore.ObjectMeta.Labels) ||
+				!reflect.DeepEqual(original.ObjectMeta.Annotations, appRestore.ObjectMeta.Annotations) ||
+				!reflect.DeepEqual(original.ObjectMeta.Finalizers, appRestore.ObjectMeta.Finalizers)) {
+			if err := r.Update(ctx, &appRestore); err != nil {
+				if handlerErr != nil {
+					logger.Error(err, "failed to persist trafficless lifecycle metadata", "handlerError", handlerErr)
+					return result, handlerErr
+				}
+				return ctrl.Result{}, err
+			}
+		}
 		if err := r.Status().Update(ctx, &appRestore); err != nil {
 			if handlerErr != nil {
 				logger.Error(err, "failed to update status", "handlerError", handlerErr)
@@ -711,7 +726,7 @@ func (r *AppRestoreReconciler) processAction(ctx context.Context, cli client.Cli
 			// 获取用户信息
 			user := appRestore.Annotations["testudo.softcdata.com/user"]
 			if user == "" {
-				user = "system"
+				user = defaultAppRestoreUser
 			}
 			traceID := appRestore.Annotations[AnnotationTraceID]
 
@@ -761,6 +776,14 @@ func (r *AppRestoreReconciler) processAction(ctx context.Context, cli client.Cli
 				// 重试恢复 Started 事件
 				taskName := fmt.Sprintf("应用恢复 %s 重试恢复", appRestore.Name)
 				helper.ReportTaskStartedWithClient(ctx, r.Client, r.Scheme, appRestore, taskName, appRestore.Spec.Cluster, user, traceID, "重试恢复开始")
+				if isDataSyncTrafficlessAppRestore(appRestore) {
+					restoreName := r.GenRestoreName(appRestore)
+					message := fmt.Sprintf("manual retry requested; waiting for Velero Restore %s deletion confirmation", restoreName)
+					return r.beginDataSyncTrafficlessTermination(
+						ctx, cli, appRestore, restore, restoreName, "RestoreRetryRequested", message,
+						dataSyncTrafficlessTerminationOutcomeRetry, r.restoreRuntimeConfig(),
+					)
+				}
 
 				if appRestore.Status.RestoreStatus.Phase != "" {
 					err := cli.Delete(ctx, restore)

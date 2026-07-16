@@ -104,6 +104,8 @@ bulkModifierActions:
 9. 写入本次 AppRestore ResourceModifier。
 10. 记录编译摘要。
 
+Drill 在第 1 步前必须先计算有效恢复策略：未提供 `DrillConfig.restorePolicy` 时继承实例 `restorePolicy`；提供非空覆盖时保留现有“Drill 修改器/bulk 输入替换实例输入”的语义。因此，Web 在两个 Drill 级修改开关均关闭时不得提交空 `restorePolicy`，否则会把实例的 `rewriteImage` 动作替换为空列表，导致后续扫描和编译都不会执行。
+
 ### 3.5 允许扫描和生成的路径
 允许生成规则的路径包括：
 
@@ -272,3 +274,5 @@ spec:
 7. restore builder 单测：`rewriteImage` 不要求长期 `modifierRuleSnapshot`，但本次 AppRestore 包含运行时生成规则。
 8. E2E：源集群镜像从 `v1.30.0` 更新到 `v1.31.0` 后，不修改 DSL，再次 ResourceSync 仍生成新目标镜像。
 9. E2E：`unmatchedPolicy=Fail` 时，未命中镜像导致恢复构建失败并返回明细。
+10. Drill 回归：未提供 Drill 级 `restorePolicy` 时，实例 `rewriteImage` 仍会在生成的 AppRestore 中重写多个 `initContainers`。
+11. Web E2E：两个 Drill 级修改开关关闭时，创建请求不携带 `restorePolicy`，开启任一开关后才携带显式覆盖。

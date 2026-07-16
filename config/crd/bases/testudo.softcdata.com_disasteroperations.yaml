@@ -77,6 +77,13 @@ spec:
               drillConfig:
                 description: DrillConfig 演练配置 (仅当 operationType=drill 时有效)
                 properties:
+                  instanceRestoreModes:
+                    additionalProperties:
+                      description: RestoreMode 定义恢复模式
+                      type: string
+                    description: InstanceRestoreModes 组父 Operation 向各实例子 Operation
+                      传递的恢复模式
+                    type: object
                   namespaceMapping:
                     additionalProperties:
                       type: string
@@ -84,6 +91,12 @@ spec:
                       NamespaceMapping 命名空间映射 (可选)
                       格式: 源命名空间 -> 目标命名空间
                     type: object
+                  restoreMode:
+                    description: RestoreMode 单实例或组子 Operation 使用的恢复模式
+                    enum:
+                    - FullRestore
+                    - ResourceOnly
+                    type: string
                   restorePolicy:
                     description: |-
                       RestorePolicy 演练级 restorePolicy 覆盖配置。

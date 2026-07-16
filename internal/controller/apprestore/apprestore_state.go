@@ -38,7 +38,7 @@ func (h *PendingHandler) Handle(ctx context.Context, r *AppRestoreReconciler, ap
 		// 创建应用恢复 Started+Finished 事件
 		user := appRestore.Annotations["testudo.softcdata.com/user"]
 		if user == "" {
-			user = "system"
+			user = defaultAppRestoreUser
 		}
 		traceID := appRestore.Annotations[AnnotationTraceID]
 		taskName := fmt.Sprintf("创建应用恢复 %s", appRestore.Name)
@@ -64,6 +64,15 @@ func (h *PendingHandler) Handle(ctx context.Context, r *AppRestoreReconciler, ap
 		logger.Error(err, "error creating kube client")
 		r.Recorder.Event(appRestore, corev1.EventTypeWarning, "CreateKubeClientFailed", err.Error())
 		return disasterv1.PhasePending, ctrl.Result{}, err
+	}
+	if isDataSyncTrafficlessAppRestore(appRestore) {
+		if err := ValidateTrafficlessVeleroRuntime(ctx, cli); err != nil {
+			message := fmt.Sprintf("target cluster %s Velero runtime is not ready: %v", appRestore.Spec.Cluster, err)
+			appRestore.Status.Reason = dataSyncTrafficlessReasonTargetRuntimeNotReady
+			appRestore.Status.Message = message
+			r.Recorder.Event(appRestore, corev1.EventTypeWarning, dataSyncTrafficlessReasonTargetRuntimeNotReady, message)
+			return disasterv1.PhaseFailed, ctrl.Result{}, nil
+		}
 	}
 
 	// 4. BSL Pre-loading (Cross-cluster Restore)
@@ -350,7 +359,7 @@ func (h *DeletingHandler) Handle(ctx context.Context, r *AppRestoreReconciler, a
 		// 删除应用恢复 Started 事件
 		user := appRestore.Annotations["testudo.softcdata.com/user"]
 		if user == "" {
-			user = "system"
+			user = defaultAppRestoreUser
 		}
 		traceID := appRestore.Annotations[AnnotationTraceID]
 		taskName := fmt.Sprintf("删除应用恢复 %s", appRestore.Name)

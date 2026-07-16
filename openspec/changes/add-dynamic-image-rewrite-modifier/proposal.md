@@ -98,6 +98,7 @@ registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/blueking/bcs-bkcmdb-sy
 - Web：
   - 在自定义资源修改器 DSL 中提供“动态镜像重写”配置入口。
   - 展示 preview 中的当前源镜像、推导目标镜像和跳过路径。
+  - 创建实例 Drill 时，若用户未启用 Drill 级资源定制化修改和批量修改，必须省略 `restorePolicy`；只有用户显式配置 Drill 覆盖时才发送该字段。
 
 ## Impact
 - 受影响规范：
@@ -119,6 +120,7 @@ registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/blueking/bcs-bkcmdb-sy
 - 如果运行时编译产物和用户手写规则同时命中同一路径，必须有确定性冲突处理。
 - 多条镜像重写规则可能同时匹配同一镜像，需要定义最长匹配和冲突拒绝。
 - 如果将运行时规则错误写回用户 DSL，会造成 spec 抖动和审计污染。
+- 如果 Web 无条件提交空 Drill `restorePolicy`，会触发 Drill 覆盖语义并使实例级 `rewriteImage` 在运行时不可见。
 
 ## Mitigation
 - 用户 DSL 与 runtime compiled ruleset 分离，源镜像完整值只存在于本次操作快照和审计摘要中。
@@ -126,3 +128,4 @@ registry-test.xxx.xxx.com:30088/dr_images/10_11_11_1_5000/blueking/bcs-bkcmdb-sy
 - 多规则匹配采用最长 `sourcePrefix` 优先；无法确定唯一结果时失败关闭。
 - 路径扫描复用 forbidden path 治理，禁止生成 status / finalizers / ownerReferences 规则。
 - 提供 preview 和事件摘要，展示本次真实源镜像、目标镜像、生成规则数量、跳过路径和冲突明细。
+- 将无 Drill 级配置表示为字段缺失，而不是空对象；同时以实际 Drill `AppRestore` 和 Web 请求回归覆盖继承路径。

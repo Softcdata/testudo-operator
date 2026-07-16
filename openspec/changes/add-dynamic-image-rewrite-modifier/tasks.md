@@ -3,7 +3,7 @@
 - [x] 1.2 更新 deepcopy 与 CRD schema
 - [x] 1.3 校验 `rewriteImage` 不要求 `sourceValue/targetValue`，但必须包含有效 `sourcePrefix/targetPrefix`
 - [x] 1.4 校验 `applyTo` 支持 `resourceSync`、`drill` 中的实际枚举范围
-- [ ] 1.5 更新示例 YAML
+- [x] 1.5 更新示例 YAML
 - [ ] 1.6 评估是否新增独立 `failover` applyTo 枚举
 
 ## 2. 运行时镜像扫描与编译
@@ -33,12 +33,14 @@
 - [x] 5.3 单测：Pod status image 不进入生成规则
 - [x] 5.4 单测：最长前缀优先
 - [x] 5.5 单测：同一资源路径目标冲突失败
-- [ ] 5.6 E2E：源镜像从 `v1.30.0` 改为 `v1.31.0` 后，不修改 DSL 再次同步仍成功重写
-- [ ] 5.7 E2E：`unmatchedPolicy=Fail` 返回未命中镜像明细
+- [x] 5.6 E2E：源镜像从 `v1.30.0` 改为 `v1.31.0` 后，不修改 DSL 再次同步仍成功重写
+- [x] 5.7 E2E：`unmatchedPolicy=Fail` 返回未命中镜像明细
 - [x] 5.8 单测：`unmatchedPolicy=Fail` 返回未命中镜像明细
+- [x] 5.9 回归：实例包含 `rewriteImage` 且 Drill 未提供 `restorePolicy` 覆盖时，创建的 `AppRestore` 包含多个 initContainer 运行时规则
+- [ ] 5.10 Web E2E：两个 Drill 级修改开关关闭时创建请求不携带 `restorePolicy`；开启任一开关时携带 Drill 覆盖
 
 ## 6. 文档与废弃路径
-- [ ] 6.1 更新用户文档，说明动态镜像重写替代完整值镜像替换
-- [ ] 6.2 标注旧 `imageSources/imageRewrite` 镜像源映射不再作为推荐路径
-- [ ] 6.3 补充从 `replaceExactValue` 完整镜像规则迁移到 `rewriteImage` 的示例
+- [x] 6.1 更新用户文档，说明动态镜像重写替代完整值镜像替换
+- [x] 6.2 标注旧 `imageSources/imageRewrite` 镜像源映射不再作为推荐路径
+- [x] 6.3 补充从 `replaceExactValue` 完整镜像规则迁移到 `rewriteImage` 的示例
 - [ ] 6.4 更新 OpenAPI / RunAPI / Apipost 文档

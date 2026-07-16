@@ -21,6 +21,15 @@ const (
 	LabelCleanupManagedBy = "testudo.softcdata.com/cleanup-managed-by"
 	// LabelCleanupManagedByValueOperator 是当前 operator 写入 cleanup 标签的固定值
 	LabelCleanupManagedByValueOperator = "disaster-operator"
+	// LabelTrafficlessLifecycle marks the internal lifecycle owner of a trafficless restore.
+	// It is intentionally an implementation label rather than a user-facing API field.
+	LabelTrafficlessLifecycle = "testudo.softcdata.com/trafficless-lifecycle"
+	// TrafficlessLifecycleDataSync scopes enhanced trafficless observation to DataSync.
+	TrafficlessLifecycleDataSync = "datasync"
+	// LabelTrafficlessRun distinguishes the temporary Pods produced by one restore run.
+	LabelTrafficlessRun = "testudo.softcdata.com/trafficless-run"
+	// CleanupRelationDataSyncTrafficlessPod is the cleanup protocol relation for DataSync FSB Pods.
+	CleanupRelationDataSyncTrafficlessPod = "datasync.trafficlessPod"
 
 	// AppBackup 标签
 	LabelAppBackupName             = "testudo.softcdata.com/app-backup-name"              // 名称 用于列表检索 用于velero标识appbackup

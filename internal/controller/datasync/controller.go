@@ -18,7 +18,6 @@ package datasync
 
 import (
 	"context"
-	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,7 +29,9 @@ import (
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -59,15 +60,22 @@ const (
 	dataSyncReasonRestoreFailed      = "RestoreFailed"
 	dataSyncReasonDependencyFailed   = "DependencyFailed"
 	dataSyncReasonStorageUnavailable = "StorageUnavailable"
+	dataSyncReasonNoPVCFound         = "NoPVCFound"
+
+	dataSyncConditionNoDataVolumes = "NoDataVolumes"
+
+	dataSyncHistoryStatusSkipped = "Skipped"
 )
 
 // DataSyncReconciler 负责调谐 DataSync 对象
 type DataSyncReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	Log       logr.Logger
-	Recorder  record.EventRecorder
-	Scheduler *scheduler.SyncScheduler
+	Scheme              *runtime.Scheme
+	Log                 logr.Logger
+	Recorder            record.EventRecorder
+	Scheduler           *scheduler.SyncScheduler
+	SourceClientFactory ctrlcommon.ClientFactory
+	TargetClientFactory ctrlcommon.ClientFactory
 }
 
 func dataSyncAuditContext(ds *disasterv1.DataSync) (user, traceID string) {
@@ -129,6 +137,7 @@ func (r *DataSyncReconciler) failDataSync(ctx context.Context, ds *disasterv1.Da
 	ds.Status.State = disasterv1.DataSyncStateFailed
 	ds.Status.LastSyncTime = &now
 	helper.SetStatusError(&ds.Status, reason, msg)
+	apimeta.RemoveStatusCondition(&ds.Status.Conditions, dataSyncConditionNoDataVolumes)
 	helper.SetConditionError(&ds.Status.Conditions, "SyncFailed", reason, msg)
 	if err := r.Status().Update(ctx, ds); err != nil {
 		return ctrl.Result{}, err
@@ -166,6 +175,182 @@ func (r *DataSyncReconciler) ensureStorageRepositoryReady(ctx context.Context, n
 		return fmt.Errorf("StorageRepository %s status is %s", storageName, sr.Status.Status)
 	}
 	return nil
+}
+
+type dataSyncVolumePlan struct {
+	PVCs []types.NamespacedName
+}
+
+func (r *DataSyncReconciler) shouldRunNoPVCPreflight(ctx context.Context, ds *disasterv1.DataSync, appBackupName string) (bool, error) {
+	if ds == nil {
+		return false, nil
+	}
+	if ds.Status.State != disasterv1.DataSyncStateInProgress {
+		return true, nil
+	}
+	if ds.Status.LastBackupName != "" || ds.Status.LastRestoreName != "" {
+		return false, nil
+	}
+
+	appBackup := &disasterv1.AppBackup{}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ds.Namespace, Name: appBackupName}, appBackup); err != nil {
+		if errors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	if _, ok := ctrlcommon.CurrentBackupActionVeleroBackupName(appBackupName, appBackup, ds.Status.LastSyncTime); ok {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (r *DataSyncReconciler) getSourceClusterClient(ctx context.Context, sourceCluster string) (client.Client, error) {
+	factory := r.SourceClientFactory
+	if factory == nil {
+		factory = &ctrlcommon.DefaultClientFactory{}
+	}
+	return factory.GetKubeClient(ctx, r.Client, r.Scheme, sourceCluster)
+}
+
+func (r *DataSyncReconciler) getTargetClusterClient(ctx context.Context, targetCluster string) (client.Client, error) {
+	factory := r.TargetClientFactory
+	if factory == nil {
+		factory = &ctrlcommon.DefaultClientFactory{}
+	}
+	return factory.GetKubeClient(ctx, r.Client, r.Scheme, targetCluster)
+}
+
+func (r *DataSyncReconciler) discoverDataSyncVolumePlan(
+	ctx context.Context,
+	sourceClient client.Client,
+	instance *disasterv1.DisasterInstance,
+) (dataSyncVolumePlan, error) {
+	if sourceClient == nil {
+		return dataSyncVolumePlan{}, fmt.Errorf("source client is nil")
+	}
+	if instance == nil {
+		return dataSyncVolumePlan{}, fmt.Errorf("disaster instance is nil")
+	}
+	if len(instance.Spec.Namespaces) == 0 {
+		return dataSyncVolumePlan{}, fmt.Errorf("instance %s/%s has no namespaces configured", instance.Namespace, instance.Name)
+	}
+
+	selector := labels.Everything()
+	if instance.Spec.LabelSelector != nil {
+		parsed, err := metav1.LabelSelectorAsSelector(instance.Spec.LabelSelector)
+		if err != nil {
+			return dataSyncVolumePlan{}, fmt.Errorf("invalid instance labelSelector: %w", err)
+		}
+		selector = parsed
+	}
+
+	matchedPVCs := make(map[types.NamespacedName]struct{})
+	for _, namespace := range instance.Spec.Namespaces {
+		namespace = strings.TrimSpace(namespace)
+		if namespace == "" {
+			return dataSyncVolumePlan{}, fmt.Errorf("instance %s/%s contains empty namespace", instance.Namespace, instance.Name)
+		}
+
+		pvcList := &corev1.PersistentVolumeClaimList{}
+		if err := sourceClient.List(ctx, pvcList, client.InNamespace(namespace)); err != nil {
+			return dataSyncVolumePlan{}, fmt.Errorf("list pvc in namespace %s: %w", namespace, err)
+		}
+
+		pvcNames := make(map[string]struct{}, len(pvcList.Items))
+		for i := range pvcList.Items {
+			pvc := pvcList.Items[i]
+			if !pvc.DeletionTimestamp.IsZero() {
+				continue
+			}
+			pvcNames[pvc.Name] = struct{}{}
+			if instance.Spec.LabelSelector == nil || selector.Matches(labels.Set(pvc.Labels)) {
+				matchedPVCs[types.NamespacedName{Namespace: pvc.Namespace, Name: pvc.Name}] = struct{}{}
+			}
+		}
+
+		if instance.Spec.LabelSelector == nil {
+			continue
+		}
+
+		podList := &corev1.PodList{}
+		if err := sourceClient.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabelsSelector{Selector: selector}); err != nil {
+			return dataSyncVolumePlan{}, fmt.Errorf("list pods in namespace %s: %w", namespace, err)
+		}
+		for i := range podList.Items {
+			pod := podList.Items[i]
+			if !pod.DeletionTimestamp.IsZero() {
+				continue
+			}
+			for _, volume := range pod.Spec.Volumes {
+				if volume.PersistentVolumeClaim == nil || volume.PersistentVolumeClaim.ClaimName == "" {
+					continue
+				}
+				if _, exists := pvcNames[volume.PersistentVolumeClaim.ClaimName]; !exists {
+					continue
+				}
+				matchedPVCs[types.NamespacedName{Namespace: pod.Namespace, Name: volume.PersistentVolumeClaim.ClaimName}] = struct{}{}
+			}
+		}
+	}
+
+	plan := dataSyncVolumePlan{PVCs: make([]types.NamespacedName, 0, len(matchedPVCs))}
+	for pvc := range matchedPVCs {
+		plan.PVCs = append(plan.PVCs, pvc)
+	}
+	return plan, nil
+}
+
+func (r *DataSyncReconciler) completeDataSyncNoPVC(ctx context.Context, ds *disasterv1.DataSync, clusterPair string) (ctrl.Result, error) {
+	if clusterPair == "" {
+		clusterPair = "-"
+	}
+	now := metav1.Now()
+	message := "本次保护范围内未发现 PVC，已跳过数据同步"
+
+	ds.Status.State = disasterv1.DataSyncStateReady
+	ds.Status.LastSyncTime = &now
+	helper.ClearStatusError(&ds.Status)
+	clearDataSyncFailureConditions(&ds.Status.Conditions)
+	apimeta.SetStatusCondition(&ds.Status.Conditions, metav1.Condition{
+		Type:               dataSyncConditionNoDataVolumes,
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: now,
+		Reason:             dataSyncReasonNoPVCFound,
+		Message:            message,
+	})
+	ds.Status.History = append(ds.Status.History, disasterv1.SyncHistoryRecord{
+		StartTime:            &now,
+		CompletionTime:       &now,
+		Duration:             "0s",
+		BackupName:           "",
+		RestoreName:          "",
+		BackupResourceCount:  0,
+		RestoreResourceCount: 0,
+		Status:               dataSyncHistoryStatusSkipped,
+	})
+	if retention := runtimecfg.SnapshotCurrent().SyncRuntime.HistoryRetention; len(ds.Status.History) > retention {
+		ds.Status.History = ds.Status.History[len(ds.Status.History)-retention:]
+	}
+
+	if err := r.Status().Update(ctx, ds); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.syncStatistics(ctx, ds); err != nil {
+		r.Log.Error(err, "Failed to sync statistics (NoPVCSkipped)")
+	}
+	r.Recorder.Event(ds, "Normal", "SyncSkipped", message)
+	r.reportDataSyncFinished(ctx, ds, clusterPair, helper.TaskStatusSuccess, message)
+	return ctrl.Result{}, nil
+}
+
+func clearDataSyncFailureConditions(conditions *[]metav1.Condition) {
+	if conditions == nil {
+		return
+	}
+	for _, conditionType := range []string{"SyncFailed", "BackupFailed", "BuildRestoreSpecFailed", "RestoreFailed"} {
+		apimeta.RemoveStatusCondition(conditions, conditionType)
+	}
 }
 
 // +kubebuilder:rbac:groups=testudo.softcdata.com,resources=datasyncs,verbs=get;list;watch;create;update;patch;delete
@@ -365,6 +550,43 @@ func (r *DataSyncReconciler) executeSync(ctx context.Context, log logr.Logger, d
 	}
 	sourceCluster, targetCluster := resolveClusters(instance, config)
 	clusterPair := fmt.Sprintf("%s->%s", sourceCluster, targetCluster)
+
+	appBackupName := fmt.Sprintf("ds-%s", dataSync.Name)
+	shouldPreflight, err := r.shouldRunNoPVCPreflight(ctx, dataSync, appBackupName)
+	if err != nil {
+		msg := fmt.Sprintf("检查 DataSync 子任务状态失败: %v", err)
+		log.Error(err, "检查 DataSync 子任务状态失败")
+		return r.failDataSync(ctx, dataSync, clusterPair, dataSyncReasonDependencyFailed, msg)
+	}
+	if shouldPreflight {
+		sourceClient, err := r.getSourceClusterClient(ctx, sourceCluster)
+		if err != nil {
+			msg := fmt.Sprintf("构建源集群 %s client 失败: %v", sourceCluster, err)
+			log.Error(err, "构建源集群 client 失败", "sourceCluster", sourceCluster)
+			return r.failDataSync(ctx, dataSync, clusterPair, dataSyncReasonDependencyFailed, msg)
+		}
+		volumePlan, err := r.discoverDataSyncVolumePlan(ctx, sourceClient, instance)
+		if err != nil {
+			msg := fmt.Sprintf("发现源集群可恢复 PVC 失败: %v", err)
+			log.Error(err, "发现源集群可恢复 PVC 失败", "sourceCluster", sourceCluster)
+			return r.failDataSync(ctx, dataSync, clusterPair, dataSyncReasonDependencyFailed, msg)
+		}
+		if len(volumePlan.PVCs) == 0 {
+			log.Info("本次保护范围内未发现 PVC，跳过 DataSync 数据恢复")
+			return r.completeDataSyncNoPVC(ctx, dataSync, clusterPair)
+		}
+		if err := r.ensureDataSyncTrafficlessRuntime(ctx, sourceCluster, "source", sourceClient); err != nil {
+			reason, message := trafficlessLifecycleErrorDetails(err, dataSyncReasonSourceVeleroRuntimeNotReady)
+			log.Error(err, "源集群 Velero 运行时未就绪", "sourceCluster", sourceCluster)
+			return r.failDataSync(ctx, dataSync, clusterPair, reason, message)
+		}
+		if err := r.ensureDataSyncTrafficlessRuntime(ctx, targetCluster, "target", nil); err != nil {
+			reason, message := trafficlessLifecycleErrorDetails(err, dataSyncReasonTargetVeleroRuntimeNotReady)
+			log.Error(err, "目标集群 Velero 运行时未就绪", "targetCluster", targetCluster)
+			return r.failDataSync(ctx, dataSync, clusterPair, reason, message)
+		}
+	}
+
 	if err := r.ensureStorageRepositoryReady(ctx, dataSync.Namespace, config.Spec.StorageRepository); err != nil {
 		msg := fmt.Sprintf("StorageRepository %s 不可用: %v", config.Spec.StorageRepository, err)
 		log.Error(err, "StorageRepository 不可用", "storageRepository", config.Spec.StorageRepository)
@@ -377,6 +599,8 @@ func (r *DataSyncReconciler) executeSync(ctx context.Context, log logr.Logger, d
 		dataSync.Status.LastBackupName = ""
 		dataSync.Status.LastRestoreName = ""
 		helper.ClearStatusError(&dataSync.Status)
+		clearDataSyncFailureConditions(&dataSync.Status.Conditions)
+		apimeta.RemoveStatusCondition(&dataSync.Status.Conditions, dataSyncConditionNoDataVolumes)
 		if err := r.Status().Update(ctx, dataSync); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -391,9 +615,8 @@ func (r *DataSyncReconciler) executeSync(ctx context.Context, log logr.Logger, d
 	}
 
 	// 2. 检查或触发 AppBackup
-	appBackupName := fmt.Sprintf("ds-%s", dataSync.Name)
 	appBackup := &disasterv1.AppBackup{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: dataSync.Namespace, Name: appBackupName}, appBackup)
+	err = r.Get(ctx, types.NamespacedName{Namespace: dataSync.Namespace, Name: appBackupName}, appBackup)
 
 	if errors.IsNotFound(err) {
 		// 不存在，创建新的长期 AppBackup
@@ -590,23 +813,34 @@ func (r *DataSyncReconciler) syncDependencyLabels(ctx context.Context, dataSync 
 // handleRestore 处理恢复阶段
 func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger, dataSync *disasterv1.DataSync, config *disasterv1.DisasterConfig, instance *disasterv1.DisasterInstance, backupName string) (ctrl.Result, error) {
 	// Restore 命名: rec-ds-<dsName[:20]>-<backupHash[:6]>
-	dsName := dataSync.Name
-	if len(dsName) > 20 {
-		dsName = dsName[:20]
-	}
-	backupHash := fmt.Sprintf("%x", md5.Sum([]byte(backupName)))[:6]
-	restoreName := fmt.Sprintf("rec-ds-%s-%s", dsName, backupHash)
+	restoreName := dataSyncRestoreName(dataSync, backupName)
 
 	restore := &disasterv1.AppRestore{}
 	sourceCluster, targetCluster := resolveClusters(instance, config)
 	clusterPair := fmt.Sprintf("%s->%s", sourceCluster, targetCluster)
 	if err := r.Get(ctx, types.NamespacedName{Namespace: dataSync.Namespace, Name: restoreName}, restore); err != nil {
 		if errors.IsNotFound(err) {
+			if runtimeErr := r.ensureDataSyncTrafficlessRuntime(ctx, targetCluster, "target", nil); runtimeErr != nil {
+				reason, message := trafficlessLifecycleErrorDetails(runtimeErr, dataSyncReasonTargetVeleroRuntimeNotReady)
+				log.Error(runtimeErr, "目标集群 Velero 运行时未就绪", "targetCluster", targetCluster)
+				return r.failDataSync(ctx, dataSync, clusterPair, reason, message)
+			}
 			// 在创建 Restore 之前，清理目标集群上可能残留的 Trafficless Pod
 			// 这确保 Velero 能重新创建 Pod 并触发 Data Restore（否则若 Pod 存在且 Policy=None，Velero 会跳过）
-			if err := r.cleanupTrafficlessPods(ctx, log, dataSync, config, instance); err != nil {
-				log.Error(err, "清理残留 Pod 失败")
-				return ctrl.Result{}, err
+			cleanup, cleanupErr := r.reconcileTrafficlessPodCleanup(ctx, log, dataSync, config, instance, restoreName, trafficlessCleanupBeforeRestore)
+			if cleanup.MetadataChanged {
+				if err := r.Update(ctx, dataSync); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			if cleanupErr != nil {
+				reason, message := trafficlessLifecycleErrorDetails(cleanupErr, dataSyncReasonTrafficlessCleanupFailed)
+				log.Error(cleanupErr, "清理残留 Trafficless Pod 失败")
+				return r.failDataSync(ctx, dataSync, clusterPair, reason, message)
+			}
+			if !cleanup.Done {
+				r.reportDataSyncProgress(ctx, dataSync, clusterPair, cleanup.Message)
+				return ctrl.Result{RequeueAfter: trafficlessCleanupRequeueAfter()}, nil
 			}
 
 			restoreSpec, policySummary, specErr := r.buildAppRestoreSpec(ctx, dataSync, config, instance, backupName)
@@ -672,11 +906,7 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      restoreName,
 					Namespace: dataSync.Namespace,
-					Labels: map[string]string{
-						metadata.LabelAppResourceOrigin:    metadata.AppResourceOriginDisasterInstance,
-						metadata.LabelAppResourceOwnerKind: metadata.AppResourceOwnerKindDataSync,
-						metadata.LabelAppResourceOwnerName: dataSync.Name,
-					},
+					Labels:    dataSyncTrafficlessAppRestoreLabels(dataSync, restoreName),
 				},
 				Spec: restoreSpec,
 			}
@@ -706,26 +936,76 @@ func (r *DataSyncReconciler) handleRestore(ctx context.Context, log logr.Logger,
 	// 检查 Restore 状态
 	// AppRestore 的 Status.Status 是 Enum
 	status := restore.Status.Status
+	if isDataSyncTrafficlessLifecycleRestore(restore) && status == disasterv1.PhaseSucceeded {
+		pvrReadiness, pvrErr := r.verifyDataSyncPodVolumeRestores(ctx, config, instance, restore)
+		if pvrErr != nil {
+			reason, message := trafficlessLifecycleErrorDetails(pvrErr, "PodVolumeRestoreFailed")
+			restore.Status.Reason = reason
+			restore.Status.Message = message
+			status = disasterv1.PhaseFailed
+		} else if !pvrReadiness.Ready {
+			r.reportDataSyncProgress(ctx, dataSync, clusterPair, pvrReadiness.Message)
+			return ctrl.Result{RequeueAfter: trafficlessCleanupRequeueAfter()}, nil
+		}
+	}
+	if isDataSyncTrafficlessLifecycleRestore(restore) && status == disasterv1.PhaseSucceeded {
+		pvcReadiness, pvcErr := r.verifyDataSyncTargetPVCsReady(ctx, config, instance)
+		if pvcErr != nil {
+			reason, message := trafficlessLifecycleErrorDetails(pvcErr, dataSyncReasonTargetPVCNotReady)
+			restore.Status.Reason = reason
+			restore.Status.Message = message
+			status = disasterv1.PhaseFailed
+		} else if !pvcReadiness.Ready {
+			timeout := dataSyncRestoreTimeout(restore, instance)
+			if !restore.CreationTimestamp.IsZero() && time.Since(restore.CreationTimestamp.Time) > timeout {
+				restore.Status.Reason = dataSyncReasonTargetPVCNotReady
+				restore.Status.Message = fmt.Sprintf("%s after %s", pvcReadiness.Message, timeout.Round(time.Second))
+				status = disasterv1.PhaseFailed
+			} else {
+				r.reportDataSyncProgress(ctx, dataSync, clusterPair, pvcReadiness.Message)
+				return ctrl.Result{RequeueAfter: trafficlessCleanupRequeueAfter()}, nil
+			}
+		}
+	}
+	if isDataSyncTrafficlessLifecycleRestore(restore) && (status == disasterv1.PhaseSucceeded || disasterv1.IsFailedAppRestorePhase(status)) {
+		cleanup, cleanupErr := r.reconcileTrafficlessPodCleanup(ctx, log, dataSync, config, instance, restoreName, trafficlessCleanupAfterRestore)
+		if cleanup.MetadataChanged {
+			if err := r.Update(ctx, dataSync); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		if cleanupErr != nil {
+			reason, message := trafficlessLifecycleErrorDetails(cleanupErr, dataSyncReasonTrafficlessCleanupFailed)
+			if restore.Status.Reason != "" || restore.Status.Message != "" {
+				message = fmt.Sprintf("%s; AppRestore failure context reason=%s message=%s", message, restore.Status.Reason, restore.Status.Message)
+			}
+			restore.Status.Reason = reason
+			restore.Status.Message = message
+			status = disasterv1.PhaseFailed
+		} else if !cleanup.Done {
+			r.reportDataSyncProgress(ctx, dataSync, clusterPair, cleanup.Message)
+			return ctrl.Result{RequeueAfter: trafficlessCleanupRequeueAfter()}, nil
+		}
+	}
 	if status == disasterv1.PhaseSucceeded || disasterv1.IsFailedAppRestorePhase(status) {
 		msg := "数据同步成功完成"
 		finalState := disasterv1.DataSyncStateReady
 		if disasterv1.IsFailedAppRestorePhase(status) {
+			reason := restore.Status.Reason
+			if reason == "" {
+				reason = dataSyncReasonRestoreFailed
+			}
 			msg = fmt.Sprintf("数据恢复失败: %s status=%s", restoreName, status)
+			if restore.Status.Message != "" {
+				msg = fmt.Sprintf("%s: %s", msg, restore.Status.Message)
+			}
 			finalState = disasterv1.DataSyncStateFailed
-			helper.SetStatusError(&dataSync.Status, dataSyncReasonRestoreFailed, msg)
-			helper.SetConditionError(&dataSync.Status.Conditions, "RestoreFailed", dataSyncReasonRestoreFailed, msg)
+			helper.SetStatusError(&dataSync.Status, reason, msg)
+			helper.SetConditionError(&dataSync.Status.Conditions, "RestoreFailed", reason, msg)
 			log.Info("AppRestore 失败", "name", restoreName, "status", status)
 		} else {
 			log.Info("AppRestore 成功", "name", restoreName)
 			helper.ClearStatusError(&dataSync.Status)
-
-			// 清理目标集群上的临时 Pod (trafficless=true) - 只在成功时清理
-			if err := r.cleanupTrafficlessPods(ctx, log, dataSync, config, instance); err != nil {
-				log.Error(err, "清理临时 Pod 失败，但不影响同步状态")
-				r.Recorder.Eventf(dataSync, "Warning", "CleanupFailed", "清理临时 Pod 失败: %v", err)
-			} else {
-				log.Info("临时 Pod 已清理")
-			}
 		}
 
 		dataSync.Status.State = finalState
@@ -807,7 +1087,7 @@ func (r *DataSyncReconciler) syncStatistics(ctx context.Context, ds *disasterv1.
 
 	for _, h := range ds.Status.History {
 		total++
-		if h.Status == string(disasterv1.PhaseSucceeded) || h.Status == "Completed" {
+		if h.Status == string(disasterv1.PhaseSucceeded) || h.Status == "Completed" || h.Status == dataSyncHistoryStatusSkipped {
 			completed++
 		} else {
 			failed++
@@ -906,12 +1186,29 @@ func (r *DataSyncReconciler) buildAppRestoreSpec(
 	shouldCleanupPVCVolumeName := shouldInjectInitialPVCVolumeNameCleanup(dataSync, instance)
 	cleanupPVCVolumeRule := restorebuilder.MakePVCVolumeNameCleanupRule(instance.Spec.Namespaces)
 
+	trafficlessRuntime, trafficlessCluster, err := ctrlcommon.ResolveTrafficlessRuntime(ctx, r.Client, target, dataSync.Spec.TrafficlessConfig)
+	if err != nil {
+		return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, err
+	}
+
+	var targetClient client.Client
+	if trafficlessRuntime.PullSecretName != "" {
+		c, err := r.getTargetClusterClient(ctx, target)
+		if err != nil {
+			return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, fmt.Errorf("build target cluster client for trafficless registry secret: %w", err)
+		}
+		targetClient = c
+		if _, err := ctrlcommon.SyncTrafficlessRegistryPullSecret(ctx, r.Client, targetClient, trafficlessCluster, instance.Spec.Namespaces); err != nil {
+			return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, fmt.Errorf("sync trafficless registry pull secret: %w", err)
+		}
+	}
+
 	preparedDataRestoreHooks, hookMarkerRules := restorebuilder.PrepareTrafficlessDataRestoreHooks(
 		dataRestoreHooks(instance),
 		instance.Spec.Namespaces,
 		nil,
 	)
-	dataModifiers := r.makeTrafficlessModifiers(dataSync)
+	dataModifiers := r.makeTrafficlessModifiers(dataSync, trafficlessRuntime, dataSyncRestoreName(dataSync, backupName))
 	if len(hookMarkerRules) > 0 && instance.Spec.RestorePolicy == nil {
 		dataModifiers = append(dataModifiers, hookMarkerRules...)
 	}
@@ -933,14 +1230,16 @@ func (r *DataSyncReconciler) buildAppRestoreSpec(
 		DataResourceModifierRules: dataModifiers,
 		DataRestoreHooks:          preparedDataRestoreHooks,
 	})
+	spec.Timeout = ctrlcommon.ResolveAppBackupTimeout(instance)
 
-	var targetClient client.Client
 	if restorebuilder.RequiresTargetClassValidation(instance) {
-		c, err := ctrlcommon.GetKubeClientSet(ctx, r.Client, r.Scheme, target)
-		if err != nil {
-			return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, fmt.Errorf("build target cluster client for restore policy: %w", err)
+		if targetClient == nil {
+			c, err := r.getTargetClusterClient(ctx, target)
+			if err != nil {
+				return disasterv1.AppRestoreSpec{}, restorebuilder.PolicySummary{}, fmt.Errorf("build target cluster client for restore policy: %w", err)
+			}
+			targetClient = c
 		}
-		targetClient = c
 	}
 
 	applyOpts := []restorebuilder.ApplyInstanceRestorePolicyOption{
@@ -1007,20 +1306,32 @@ func shouldInjectInitialPVCVolumeNameCleanup(
 // makeTrafficlessModifiers 生成 Trafficless Restore 规则
 // 根据 V2 设计文档：恢复时 ResourceModifier 替换 Image 为 busybox，移除所有 Labels，确保 Service 不导流
 // 注意：Velero 不支持修改 metadata.name，所以我们只能通过移除 labels 和 ownerReferences 来避免 Pod 被控制器管理
-func (r *DataSyncReconciler) makeTrafficlessModifiers(ds *disasterv1.DataSync) []disasterv1.ResourceModifierRule {
-	trafficlessImage := r.resolveTrafficlessImage(ds)
-	trafficlessCommand := r.resolveTrafficlessCommand(ds)
+func (r *DataSyncReconciler) makeTrafficlessModifiers(ds *disasterv1.DataSync, runtime ctrlcommon.TrafficlessRuntime, restoreName string) []disasterv1.ResourceModifierRule {
+	trafficlessImage := runtime.Image
+	if trafficlessImage == "" {
+		trafficlessImage = r.resolveTrafficlessImage(ds)
+	}
+	trafficlessCommand := runtime.Command
+	if len(trafficlessCommand) == 0 {
+		trafficlessCommand = r.resolveTrafficlessCommand(ds)
+	}
 	commandJSON, err := json.Marshal(trafficlessCommand)
 	if err != nil {
 		// fallback to safe default command
 		commandJSON = []byte(`["sleep","3600"]`)
 	}
 
+	trafficlessLabels, err := json.Marshal(dataSyncTrafficlessLabels(ds, restoreName))
+	if err != nil {
+		trafficlessLabels = []byte(`{"trafficless":"true"}`)
+	}
+
 	// 针对 Pods 直接修改 (因为 IncludedResources只包含 Pods)
 	// 注意：JSON Patch 操作顺序很重要！
 	// 1. 清除原有 labels（防止 Service 导流 + 防止 STS/Deployment 识别）
 	// 2. 将 ownerReferences 置空（防止 GC）
-	// 3. 替换容器配置
+	// 3. 清理源集群调度约束，避免临时恢复 Pod 在目标集群 Pending
+	// 4. 替换容器配置
 	podPatches := []disasterv1.JSONPatch{
 		// 清除所有原有标签 - 替换为只包含 trafficless 的 map
 		// 这样 StatefulSet 的 selector 就无法匹配到这个 Pod
@@ -1028,7 +1339,7 @@ func (r *DataSyncReconciler) makeTrafficlessModifiers(ds *disasterv1.DataSync) [
 		{
 			Operation: "add",
 			Path:      "/metadata/labels",
-			Value:     `{"trafficless": "true"}`,
+			Value:     string(trafficlessLabels),
 		},
 		// 将 ownerReferences 置空，避免临时 Pod 被控制器/GC 回收。
 		// 使用 add + [] 保持幂等：字段不存在时不会触发 "expected one matching path ... got 0"。
@@ -1036,6 +1347,22 @@ func (r *DataSyncReconciler) makeTrafficlessModifiers(ds *disasterv1.DataSync) [
 			Operation: "add",
 			Path:      "/metadata/ownerReferences",
 			Value:     "[]",
+		},
+		// 清理源集群节点绑定和选择器；trafficless Pod 只需要能调度并写入 PVC。
+		{
+			Operation: "add",
+			Path:      "/spec/nodeName",
+			Value:     "",
+		},
+		{
+			Operation: "add",
+			Path:      "/spec/nodeSelector",
+			Value:     "{}",
+		},
+		{
+			Operation: "add",
+			Path:      "/spec/affinity",
+			Value:     "{}",
 		},
 		// 替换容器镜像为 busybox
 		{
@@ -1057,6 +1384,9 @@ func (r *DataSyncReconciler) makeTrafficlessModifiers(ds *disasterv1.DataSync) [
 			Value:     "[]",
 		},
 	}
+	if pullSecretPatch, ok := ctrlcommon.TrafficlessImagePullSecretsPatch(runtime.PullSecretName); ok {
+		podPatches = append(podPatches, pullSecretPatch)
+	}
 
 	return []disasterv1.ResourceModifierRule{
 		{
@@ -1073,53 +1403,6 @@ func (r *DataSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&disasterv1.DataSync{}).
 		Complete(r)
-}
-
-// cleanupTrafficlessPods 清理目标集群上的临时 Pod (trafficless=true)
-func (r *DataSyncReconciler) cleanupTrafficlessPods(ctx context.Context, log logr.Logger, dataSync *disasterv1.DataSync, config *disasterv1.DisasterConfig, instance *disasterv1.DisasterInstance) error {
-	_, target := resolveClusters(instance, config)
-
-	// 获取目标集群的 client
-	targetClient, err := ctrlcommon.GetKubeClientSet(ctx, r.Client, r.Scheme, target)
-	if err != nil {
-		return fmt.Errorf("failed to get target cluster client: %w", err)
-	}
-
-	// 在每个命名空间中查找并删除标记为 trafficless=true 的 Pod
-	for _, ns := range instance.Spec.Namespaces {
-		podList := &corev1.PodList{}
-		listOpts := []client.ListOption{
-			client.InNamespace(ns),
-		}
-
-		if err := targetClient.List(ctx, podList, listOpts...); err != nil {
-			log.Error(err, "列出 Pod 失败", "namespace", ns)
-			continue
-		}
-
-		for _, pod := range podList.Items {
-			isTrafficless := pod.Labels["trafficless"] == "true"
-			if !isTrafficless {
-				// 兜底方案：检查镜像是否为当前配置的 trafficless 镜像
-				expectedImage := r.resolveTrafficlessImage(dataSync)
-				for _, container := range pod.Spec.Containers {
-					if container.Image == expectedImage {
-						isTrafficless = true
-						break
-					}
-				}
-			}
-
-			if isTrafficless {
-				log.Info("删除临时 Pod", "namespace", ns, "pod", pod.Name)
-				if err := targetClient.Delete(ctx, &pod); err != nil && !errors.IsNotFound(err) {
-					log.Error(err, "删除 Pod 失败", "namespace", ns, "pod", pod.Name)
-				}
-			}
-		}
-	}
-
-	return nil
 }
 
 func (r *DataSyncReconciler) resolveTrafficlessImage(ds *disasterv1.DataSync) string {

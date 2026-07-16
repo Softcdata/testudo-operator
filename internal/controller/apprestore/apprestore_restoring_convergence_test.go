@@ -318,7 +318,7 @@ func TestRestoringHandler_StallAfterRetryFails(t *testing.T) {
 	if nextPhase != disasterv1.PhaseFailed {
 		t.Fatalf("expected next phase Failed, got %q", nextPhase)
 	}
-	if appRestore.Status.Reason != "RestoreStalledAfterRetry" {
+	if appRestore.Status.Reason != appRestoreReasonStalledAfterRetry {
 		t.Fatalf("expected reason RestoreStalledAfterRetry, got %q", appRestore.Status.Reason)
 	}
 	if !strings.Contains(appRestore.Status.Message, "stallType=progress_completed") {
@@ -631,7 +631,7 @@ func TestRestoringHandler_EmptyStatusRetryExhaustedFails(t *testing.T) {
 	if nextPhase != disasterv1.PhaseFailed {
 		t.Fatalf("expected next phase Failed, got %q", nextPhase)
 	}
-	if appRestore.Status.Reason != "RestoreStalledAfterRetry" {
+	if appRestore.Status.Reason != appRestoreReasonStalledAfterRetry {
 		t.Fatalf("expected reason RestoreStalledAfterRetry, got %q", appRestore.Status.Reason)
 	}
 	if !strings.Contains(appRestore.Status.Message, "stallType=empty_status") {
@@ -730,7 +730,7 @@ func TestRestoringHandler_RestorePVsFalseStillDetectsPVRFailure(t *testing.T) {
 	if nextPhase != disasterv1.PhaseFailed {
 		t.Fatalf("expected next phase Failed, got %q", nextPhase)
 	}
-	if appRestore.Status.Reason != "PodVolumeRestoreFailed" {
+	if appRestore.Status.Reason != appRestoreReasonPVRFailed {
 		t.Fatalf("expected reason PodVolumeRestoreFailed, got %q", appRestore.Status.Reason)
 	}
 	if !strings.Contains(appRestore.Status.Message, "pvr-failed-when-restorePVs-false") {

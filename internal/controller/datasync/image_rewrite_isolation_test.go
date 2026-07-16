@@ -2,10 +2,12 @@ package datasync
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
+	"github.com/softcdata/testudo-operator/pkg/metadata"
 )
 
 func TestBuildAppRestoreSpec_KeepsTrafficlessSemanticsWhenImageRewriteEnabled(t *testing.T) {
@@ -52,8 +54,8 @@ func TestBuildAppRestoreSpec_KeepsTrafficlessSemanticsWhenImageRewriteEnabled(t 
 	if rule.Conditions.GroupResource != "pods" {
 		t.Fatalf("expected trafficless rule for pods, got %s", rule.Conditions.GroupResource)
 	}
-	if len(rule.Patches) != 5 {
-		t.Fatalf("expected 5 trafficless patches, got %d", len(rule.Patches))
+	if len(rule.Patches) != 8 {
+		t.Fatalf("expected 8 trafficless patches, got %d", len(rule.Patches))
 	}
 
 	patchByPath := map[string]disasterv1.JSONPatch{}
@@ -73,8 +75,38 @@ func TestBuildAppRestoreSpec_KeepsTrafficlessSemanticsWhenImageRewriteEnabled(t 
 	if patchByPath["/spec/containers/0/args"].Value != "[]" {
 		t.Fatalf("unexpected trafficless args patch: %s", patchByPath["/spec/containers/0/args"].Value)
 	}
-	if patchByPath["/metadata/labels"].Value != `{"trafficless": "true"}` {
-		t.Fatalf("unexpected labels patch: %s", patchByPath["/metadata/labels"].Value)
+	trafficlessLabels := map[string]string{}
+	if err := json.Unmarshal([]byte(patchByPath["/metadata/labels"].Value), &trafficlessLabels); err != nil {
+		t.Fatalf("decode labels patch: %v", err)
+	}
+	if trafficlessLabels["trafficless"] != "true" {
+		t.Fatalf("expected trafficless label, got %#v", trafficlessLabels)
+	}
+	if trafficlessLabels[metadata.LabelTrafficlessLifecycle] != metadata.TrafficlessLifecycleDataSync {
+		t.Fatalf("expected DataSync trafficless lifecycle label, got %#v", trafficlessLabels)
+	}
+	for _, key := range []string{
+		metadata.LabelCleanupManagedBy,
+		metadata.LabelCleanupOwnerToken,
+		metadata.LabelCleanupRelation,
+		metadata.LabelCleanupStrategy,
+		metadata.LabelTrafficlessRun,
+	} {
+		if trafficlessLabels[key] == "" {
+			t.Fatalf("expected scoped cleanup label %s, got %#v", key, trafficlessLabels)
+		}
+	}
+	if patchByPath["/spec/nodeName"].Operation != "add" || patchByPath["/spec/nodeName"].Value != "" {
+		t.Fatalf("unexpected nodeName cleanup patch: %#v", patchByPath["/spec/nodeName"])
+	}
+	if patchByPath["/spec/nodeSelector"].Operation != "add" || patchByPath["/spec/nodeSelector"].Value != "{}" {
+		t.Fatalf("unexpected nodeSelector cleanup patch: %#v", patchByPath["/spec/nodeSelector"])
+	}
+	if patchByPath["/spec/affinity"].Operation != "add" || patchByPath["/spec/affinity"].Value != "{}" {
+		t.Fatalf("unexpected affinity cleanup patch: %#v", patchByPath["/spec/affinity"])
+	}
+	if _, ok := patchByPath["/spec/topologySpreadConstraints"]; ok {
+		t.Fatalf("did not expect topologySpreadConstraints cleanup patch")
 	}
 
 	ownerRefPatch, ok := patchByPath["/metadata/ownerReferences"]

@@ -1,17 +1,27 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: DataSync 的数据恢复必须使用 Trafficless 临时 Pod
+### Requirement: Trafficless busybox 必须按本次恢复目标集群解析
 
-DataSync 和 Drill 的 FSB 数据恢复必须 (MUST) 通过 Trafficless 临时 Pod 接收 PodVolumeRestore 写入，并且该临时 Pod 必须按本次恢复目标集群解析运行时镜像与拉取凭据。
+DataSync 和 Drill 的 FSB 数据恢复必须 (MUST) 通过 Trafficless 临时 Pod 接收 PodVolumeRestore 写入，并且该临时 Pod 的 busybox 镜像与拉取凭据必须按本次恢复目标集群解析。Trafficless busybox 属于平台恢复运行时镜像，不得使用业务镜像前缀替换、`Cluster.spec.imageSources`、ResourceSync 镜像规则或 workload 镜像扫描结果。
 
 #### Scenario: DataSync 使用目标集群私有仓库
 - **Given** 一个 `DisasterInstance` 正在执行 DataSync 数据恢复
 - **And** 本次恢复目标集群为 `cluster-b`
+- **And** 源集群 `cluster-a` 也配置了不同的 `veleroInstall.imageRegistry`
 - **And** `cluster-b.spec.veleroInstall.imageRegistry=harbor.customer.local/disaster`
 - **When** Operator 构建 data restore AppRestore
 - **Then** Trafficless Pod 的镜像必须为 `harbor.customer.local/disaster/busybox:1.36`
 - **And** 不得使用源集群 registry
 - **And** 不得使用 `DisasterConfig.spec.targetCluster` 的静态值绕过当前角色方向
+
+#### Scenario: DataSync 角色反转后使用当前 secondaryCluster
+- **Given** `DisasterConfig.spec.targetCluster=cluster-b`
+- **And** failover/reprotect 后 `DisasterInstance.status.primaryCluster=cluster-b`
+- **And** `DisasterInstance.status.secondaryCluster=cluster-a`
+- **And** `cluster-a.spec.veleroInstall.imageRegistry=harbor.reverse.local/platform`
+- **When** Operator 构建下一次 DataSync data restore AppRestore
+- **Then** Trafficless Pod 的镜像必须为 `harbor.reverse.local/platform/busybox:1.36`
+- **And** 不得继续使用静态目标集群 `cluster-b` 的 registry
 
 #### Scenario: 显式 Trafficless 镜像优先
 - **Given** `DataSync.spec.trafficlessConfig.image=registry.local/tools/trafficless:v2`
@@ -25,6 +35,13 @@ DataSync 和 Drill 的 FSB 数据恢复必须 (MUST) 通过 Trafficless 临时 P
 - **And** 本次恢复目标集群配置了 `veleroInstall.imageRegistry=harbor.customer.local/disaster`
 - **When** Operator 构建 data restore AppRestore
 - **Then** `busybox:latest` 必须被视为历史默认值
+- **And** Trafficless Pod 的镜像必须为 `harbor.customer.local/disaster/busybox:1.36`
+
+#### Scenario: 历史默认 busybox 1.36 不阻断离线仓库解析
+- **Given** 历史 DataSync 对象中存在 `trafficlessConfig.image=busybox:1.36`
+- **And** 本次恢复目标集群配置了 `veleroInstall.imageRegistry=harbor.customer.local/disaster`
+- **When** Operator 构建 data restore AppRestore
+- **Then** `busybox:1.36` 必须被视为默认值
 - **And** Trafficless Pod 的镜像必须为 `harbor.customer.local/disaster/busybox:1.36`
 
 #### Scenario: 无目标集群私有仓库时回退默认镜像
@@ -47,22 +64,9 @@ DataSync 和 Drill 的 FSB 数据恢复必须 (MUST) 通过 Trafficless 临时 P
 - **Then** Trafficless Pod modifier 必须注入 `/spec/imagePullSecrets`
 - **And** 引用的 Secret 名称必须与目标恢复 namespace 中同步的 pull secret 一致
 
-#### Scenario: Trafficless Pod 不依赖源业务 ServiceAccount
-- **Given** 源业务 Pod 使用了目标集群不存在的 `serviceAccountName`
+#### Scenario: 业务镜像替换规则不参与 Trafficless busybox 解析
+- **Given** `Cluster.spec.imageSources` 或 ResourceSync 业务镜像前缀替换规则配置了 `docker.io -> harbor.biz.local`
+- **And** 本次恢复目标集群配置了 `veleroInstall.imageRegistry=harbor.platform.local/disaster`
 - **When** Operator 构建 data restore AppRestore
-- **Then** Trafficless Pod modifier 应当将 `/spec/serviceAccountName` 设置为 `default`
-- **And** 应当将 `/spec/automountServiceAccountToken` 设置为 `false`
-
-#### Scenario: Trafficless 恢复不得更新已存在 Pod 的不可变字段
-- **Given** 目标恢复 namespace 中已存在与备份 Pod 同名的 Pod
-- **And** Trafficless modifier 需要修改 `spec.nodeName`、`spec.containers[*].command` 或 `spec.containers[*].args`
-- **When** Operator 准备创建 data restore AppRestore
-- **Then** Operator 必须在 AppRestore 创建前清理可安全删除的冲突 Pod
-- **And** 不得依赖 Velero `ExistingResourcePolicy=Update` 去原地修改该 Pod
-
-#### Scenario: 冲突 Pod 无法安全删除时恢复前失败
-- **Given** 目标恢复 namespace 中存在冲突 Pod
-- **And** Operator 无法确认该 Pod 可安全删除，或删除该 Pod 失败
-- **When** Operator 准备创建 data restore AppRestore
-- **Then** 本次恢复必须在 AppRestore 创建前失败
-- **And** 错误信息必须说明存在 Pod immutable-field update 风险
+- **Then** Trafficless Pod 的镜像必须为 `harbor.platform.local/disaster/busybox:1.36`
+- **And** 不得解析为 `harbor.biz.local/busybox:1.36`

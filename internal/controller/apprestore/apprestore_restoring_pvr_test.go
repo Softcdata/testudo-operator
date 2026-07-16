@@ -58,7 +58,7 @@ func TestDetectPodVolumeRestoreIssue_Failed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detectPodVolumeRestoreIssue returned error: %v", err)
 	}
-	if reason != "PodVolumeRestoreFailed" {
+	if reason != appRestoreReasonPVRFailed {
 		t.Fatalf("unexpected reason: got %q", reason)
 	}
 	if !strings.Contains(message, "pvr-failed-1") {
@@ -92,7 +92,7 @@ func TestDetectPodVolumeRestoreIssue_Stalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detectPodVolumeRestoreIssue returned error: %v", err)
 	}
-	if reason != "PodVolumeRestoreStalled" {
+	if reason != appRestoreReasonPVRStalled {
 		t.Fatalf("unexpected reason: got %q", reason)
 	}
 	if !strings.Contains(message, "pvr-stalled-1") {
@@ -178,7 +178,7 @@ func TestRestoringHandler_FailsWhenPodVolumeRestoreFailed(t *testing.T) {
 	if nextPhase != disasterv1.PhaseFailed {
 		t.Fatalf("expected next phase Failed, got %q", nextPhase)
 	}
-	if appRestore.Status.Reason != "PodVolumeRestoreFailed" {
+	if appRestore.Status.Reason != appRestoreReasonPVRFailed {
 		t.Fatalf("expected reason PodVolumeRestoreFailed, got %q", appRestore.Status.Reason)
 	}
 	if !strings.Contains(appRestore.Status.Message, "pvr-failed-in-handler") {

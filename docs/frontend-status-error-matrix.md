@@ -39,14 +39,14 @@
 | StorageRepository | `ValidationFailed` |
 | DisasterConfig | `SourceClusterNotFound`, `TargetClusterNotFound`, `StorageRepositoryNotFound`, `ClusterNotReady`, `QueryDependencyFailed`, `UpdateConfigFailed`, `ApplyStorageRepositoryFailed` |
 | DisasterPolicy | `InvalidSchedule`, `DeletionBlocked`（legacy 删除保护恢复后仍保留） |
-| DataSync | `BackupFailed`, `RestoreFailed`, `DependencyFailed`, `StorageUnavailable` |
+| DataSync | `BackupFailed`, `BuildRestoreSpecFailed`, `RestoreFailed`, `DependencyFailed`, `StorageUnavailable`, `SourceVeleroRuntimeNotReady`, `TargetVeleroRuntimeNotReady`, `TrafficlessPodUnschedulable`, `TrafficlessPodImagePullFailed`, `TrafficlessPodMountFailed`, `TrafficlessPodRuntimeFailed`, `NodeAgentUnavailable`, `PodVolumeRestoreFailed`, `PodVolumeRestoreStalled`, `VeleroRestoreTerminationTimeout`, `TrafficlessCleanupAmbiguous`, `TrafficlessCleanupTimeout`, `TargetPVCNotReady` |
 | ResourceSync | `BackupFailed`, `BuildRestoreSpecFailed`, `RestoreFailed`, `DependencyFailed`, `StorageUnavailable` |
 | DisasterOperation | `InvalidOperationType`, `ResourceNotFound`, `TimeoutExceeded`, `SyncFailed`, `InvalidState`, `ClusterConnectionFailed`, `StepFailed`, `OperationFailed` |
 | DisasterDrill | `ValidationFailed`, `TopologyChanged`, `OperationNotFound`, `CleanupFailed`, `OperationFailed`, `InternalError`, `DrillFailed` |
 | DisasterGroup | `InstanceNotFound`, `InstanceFailed` |
 | DisasterInstance | `DataSyncFailed`, `ResourceSyncFailed`, `InitializationFailed`, `InstanceFailed` |
 | AppBackup | `ReconcileError`, `TimeoutExceeded`, `BackupFailed`, `BackupPartiallyFailed` |
-| AppRestore | `ReconcileError`, `RestoreFailed`, `RestorePartiallyFailed`, `TimeoutExceeded` |
+| AppRestore | `ReconcileError`, `RestoreFailed`, `RestorePartiallyFailed`, `TimeoutExceeded`, `TargetVeleroRuntimeNotReady`, `TrafficlessPodUnschedulable`, `TrafficlessPodImagePullFailed`, `TrafficlessPodMountFailed`, `TrafficlessPodRuntimeFailed`, `NodeAgentUnavailable`, `PodVolumeRestoreFailed`, `PodVolumeRestoreStalled`, `VeleroRestoreTerminationTimeout` |
 
 Server 全局错误包络：`internal/transport/response.go`
 - `code`: 业务错误码（如 `1000/3004/5000`）
@@ -122,10 +122,34 @@ Server 全局错误包络：`internal/transport/response.go`
 - 状态：`Ready / InProgress / Failed`
 - 失败 `reason`（稳定常量）：
   - `BackupFailed`
+  - `BuildRestoreSpecFailed`
   - `RestoreFailed`
   - `DependencyFailed`
   - `StorageUnavailable`
+  - `SourceVeleroRuntimeNotReady` / `TargetVeleroRuntimeNotReady`
+  - `TrafficlessPodUnschedulable` / `TrafficlessPodImagePullFailed` / `TrafficlessPodMountFailed` / `TrafficlessPodRuntimeFailed`
+  - `NodeAgentUnavailable`
+  - `PodVolumeRestoreFailed` / `PodVolumeRestoreStalled`
+  - `VeleroRestoreTerminationTimeout`
+  - `TrafficlessCleanupAmbiguous` / `TrafficlessCleanupTimeout`
+  - `TargetPVCNotReady`
 - 失败描述：`status.message`
+
+#### 4.5.1 DataSync Trafficless 恢复处置
+
+以下 reason 仅由带 DataSync Trafficless 内部生命周期标识的恢复链路产生；ResourceSync、Drill 和用户直接创建的 AppRestore 不进入该分支。
+
+| reason | 首要检查 | 处置边界 |
+| --- | --- | --- |
+| `SourceVeleroRuntimeNotReady` / `TargetVeleroRuntimeNotReady` | 对应 Cluster 是否 `Ready`，`velero` Deployment 与 `node-agent` DaemonSet 的 Ready 副本 | 修复运行时后重新触发同步；不要通过修改业务 Pod 绕过预检。 |
+| `TrafficlessPodUnschedulable` | 目标 Pod 的 `PodScheduled=False` Condition、未被本轮清理的调度约束 | 仅诊断 `nodeName`、`nodeSelector`、`affinity` 已有清理之外的约束；不要自动清空 topology spread、toleration 或 runtimeClass。 |
+| `TrafficlessPodImagePullFailed` / `TrafficlessPodMountFailed` / `TrafficlessPodRuntimeFailed` | Pod 的 init/container waiting 或 terminated 状态、镜像凭据、PVC/volume Event | 修复镜像、凭据、挂载或容器配置，再新建同步运行；不以 busybox 镜像定位或删除 Pod。 |
+| `NodeAgentUnavailable` | 已调度节点上的 Ready `node-agent` Pod 与 DaemonSet 状态 | 恢复目标节点 node-agent 覆盖；不要重启整个 Velero 集群作为本流程的自动补救。 |
+| `PodVolumeRestoreFailed` / `PodVolumeRestoreStalled` | 同名 Restore 的 PVR phase/message 和节点 node-agent 日志 | 先保留 PVR/Restore 诊断证据，再按同步策略重试。 |
+| `VeleroRestoreTerminationTimeout` | 同名 Velero Restore 是否仍在 Terminating、其 finalizer 和控制器事件 | 人工确认阻塞原因；本流程不会自动剥离 finalizer。 |
+| `TrafficlessCleanupAmbiguous` | `trafficless=true` Pod 是否缺少平台 owner/run 标签 | 不自动删除；按 namespace/name 人工确认归属。 |
+| `TrafficlessCleanupTimeout` | 本 DataSync owner/run selector 是否仍返回 Pod 或 Terminating Pod | 继续观察或人工处理该精确 selector，不影响同命名空间其他 busybox/trafficless Pod。 |
+| `TargetPVCNotReady` | 目标 PVC 是否存在、`Bound` 且未删除 | 修复 StorageClass、PV 绑定或 PVC 删除问题后重试。 |
 
 ### 4.6 ResourceSync
 来源：`internal/controller/resourcesync/controller.go`

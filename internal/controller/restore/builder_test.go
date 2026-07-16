@@ -105,6 +105,11 @@ func TestBuildAppRestoreSpec_DataRestoreTrafficlessPodIsDetachedAndRunnable(t *t
 	if spec.ResourceModifierRules[0].Conditions.GroupResource != "pods" {
 		t.Fatalf("expected pods modifier rule, got %s", spec.ResourceModifierRules[0].Conditions.GroupResource)
 	}
+	if hasBuilderPatchPath(spec.ResourceModifierRules, "/spec/nodeName") ||
+		hasBuilderPatchPath(spec.ResourceModifierRules, "/spec/nodeSelector") ||
+		hasBuilderPatchPath(spec.ResourceModifierRules, "/spec/affinity") {
+		t.Fatalf("shared builder trafficless modifiers must not include DataSync-only scheduling cleanup: %#v", spec.ResourceModifierRules)
+	}
 
 	var ownerRefPatch *disasterv1.JSONPatch
 	var commandPatch *disasterv1.JSONPatch
@@ -150,6 +155,17 @@ func TestBuildAppRestoreSpec_DataRestoreTrafficlessPodIsDetachedAndRunnable(t *t
 	if argsPatch.Value != `["while true; do sleep 3600; done"]` {
 		t.Fatalf("expected keepalive args value, got %s", argsPatch.Value)
 	}
+}
+
+func hasBuilderPatchPath(rules []disasterv1.ResourceModifierRule, path string) bool {
+	for _, rule := range rules {
+		for _, patch := range rule.Patches {
+			if patch.Path == path {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestMakePVCVolumeNameCleanupRule(t *testing.T) {

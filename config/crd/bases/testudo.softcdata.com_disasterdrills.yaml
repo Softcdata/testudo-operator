@@ -1190,6 +1190,12 @@ spec:
                 - currentLevelIndex
                 - totalLevels
                 type: object
+              instanceRestoreModes:
+                additionalProperties:
+                  description: RestoreMode 定义恢复模式
+                  type: string
+                description: InstanceRestoreModes 记录 Ready 阶段逐实例冻结的恢复模式
+                type: object
               message:
                 description: Message 状态消息
                 type: string
@@ -1208,6 +1214,8 @@ spec:
                 enum:
                 - Reuse
                 - FullRestore
+                - ResourceOnly
+                - Mixed
                 type: string
               restoreName:
                 description: RestoreName 演练创建的 AppRestore 名称 (仅完整恢复模式)

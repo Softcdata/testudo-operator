@@ -43,9 +43,9 @@ type TriggerSpec struct {
 // TrafficlessConfig 定义 Trafficless Restore 的配置
 // 创建不接收流量的"隐形 Pod"来接收 FSB 数据
 type TrafficlessConfig struct {
-	// Image 隐形 Pod 使用的容器镜像（默认: busybox:latest）
+	// Image 隐形 Pod 使用的容器镜像（默认: busybox:1.36）
 	// +optional
-	// +kubebuilder:default="busybox:latest"
+	// +kubebuilder:default="busybox:1.36"
 	Image string `json:"image,omitempty"`
 
 	// Command 隐形 Pod 的启动命令（默认: ["sleep", "3600"]）

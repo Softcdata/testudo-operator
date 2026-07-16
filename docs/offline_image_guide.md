@@ -30,6 +30,9 @@
 | :--- | :--- | :--- | :--- |
 | **Velero 主程序** | 核心控制器与 Agent | `velero/velero:v1.17.0` | `registry.example.com/disaster/velero:v1.17.0` |
 | **AWS 插件** | 对接 S3/MinIO 存储 | `velero/velero-plugin-for-aws:v1.13.0` | `registry.example.com/disaster/velero-plugin-for-aws:v1.13.0` |
+| **Trafficless busybox** | FSB 数据恢复临时 Pod 运行时镜像 | `busybox:1.36` | `registry.example.com/disaster/busybox:1.36` |
+
+DataSync 和 Drill 数据恢复会按当前恢复目标集群的 `Cluster.spec.veleroInstall.imageRegistry` 解析 Trafficless busybox。例如目标集群配置 `imageRegistry=registry.example.com/disaster` 时，临时 Pod 默认使用 `registry.example.com/disaster/busybox:1.36`；如果配置了 `registryCredentialSecretRef`，系统会将对应 dockerconfigjson pull secret 同步到业务恢复命名空间。
 
 ### 3.2 配置固化 (Configuration Alignment)
 管理模块中使用的 `velero.values.yaml` 必须进行固化修改，将所有 `repository` 字段指向内网仓库地址。

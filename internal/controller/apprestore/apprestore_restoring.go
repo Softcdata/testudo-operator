@@ -39,6 +39,10 @@ const (
 	restoreStallTypeEmptyStatus         = "empty_status"
 	veleroDeploymentDefaultName         = "velero"
 	veleroRestartAtAnnotationKey        = "kubectl.kubernetes.io/restartedAt"
+	defaultAppRestoreUser               = "system"
+	appRestoreReasonStalledAfterRetry   = "RestoreStalledAfterRetry"
+	appRestoreReasonPVRFailed           = "PodVolumeRestoreFailed"
+	appRestoreReasonPVRStalled          = "PodVolumeRestoreStalled"
 )
 
 var veleroRestartCooldown = 2 * time.Minute
@@ -64,6 +68,9 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 		restoreName = restore.Name
 	} else {
 		restoreName = r.GenRestoreName(appRestore)
+	}
+	if isDataSyncTrafficlessAppRestore(appRestore) && dataSyncTrafficlessTerminationPending(appRestore) {
+		return r.reconcileDataSyncTrafficlessTermination(ctx, cli, appRestore, restore, err, restoreName, cfg)
 	}
 
 	if apierrors.IsNotFound(err) {
@@ -95,7 +102,7 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 	if restore.Status.Phase == velerov1.RestorePhaseInProgress && oldPhase != velerov1.RestorePhaseInProgress {
 		user := appRestore.Annotations[AnnotationUser]
 		if user == "" {
-			user = "system"
+			user = defaultAppRestoreUser
 		}
 		triggeredBy := appRestore.Annotations[AnnotationTraceID]
 		taskName := fmt.Sprintf("应用恢复 %s 执行恢复 %s", appRestore.Name, restoreName)
@@ -105,13 +112,33 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 	// 只要 Restore 处于运行态，就执行 PVR 异常探测（最佳努力）。
 	if isVeleroRestoreRunning(restore.Status.Phase) {
 		timeout := resolveRestoreInProgressTimeout(appRestore, cfg)
-		reason, msg, detectErr := r.detectPodVolumeRestoreIssue(ctx, cli, restoreName, timeout, cfg.PodVolumeRestorePendingMaxWait)
+		if isDataSyncTrafficlessAppRestore(appRestore) {
+			reason, msg, detectErr := r.detectDataSyncTrafficlessPodIssue(ctx, cli, appRestore, cfg)
+			if detectErr != nil {
+				logger.Error(detectErr, "failed to inspect DataSync trafficless Pod status", "restore", restoreName)
+			} else if reason != "" {
+				return r.beginDataSyncTrafficlessTermination(
+					ctx, cli, appRestore, restore, restoreName, reason, msg,
+					dataSyncTrafficlessTerminationOutcomeFail, cfg,
+				)
+			}
+		}
+
+		reason, msg, detectErr := r.detectPodVolumeRestoreIssueWithInProgress(
+			ctx, cli, restoreName, timeout, cfg.PodVolumeRestorePendingMaxWait, isDataSyncTrafficlessAppRestore(appRestore),
+		)
 		if detectErr != nil {
 			// PVR 状态检查异常按最佳努力处理，不中断主状态机。
 			logger.Error(detectErr, "failed to inspect PodVolumeRestore status", "restore", restoreName)
 		} else if reason != "" {
 			r.Recorder.Event(appRestore, corev1.EventTypeWarning, reason, msg)
 			logger.Info("Detected PodVolumeRestore issue, failing AppRestore", "restore", restoreName, "reason", reason, "message", msg)
+			if isDataSyncTrafficlessAppRestore(appRestore) {
+				return r.beginDataSyncTrafficlessTermination(
+					ctx, cli, appRestore, restore, restoreName, reason, msg,
+					dataSyncTrafficlessTerminationOutcomeFail, cfg,
+				)
+			}
 
 			if err := r.forceTerminateRestore(ctx, cli, appRestore, restore); err != nil {
 				logger.Error(err, "failed to force terminate restore after PodVolumeRestore issue", "restore", restoreName)
@@ -125,7 +152,7 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 
 			user := appRestore.Annotations[AnnotationUser]
 			if user == "" {
-				user = "system"
+				user = defaultAppRestoreUser
 			}
 			triggeredBy := appRestore.Annotations[AnnotationTraceID]
 			taskName := fmt.Sprintf("应用恢复 %s 执行恢复 %s", appRestore.Name, restoreName)
@@ -152,7 +179,7 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 
 		user := appRestore.Annotations[AnnotationUser]
 		if user == "" {
-			user = "system"
+			user = defaultAppRestoreUser
 		}
 		triggeredBy := appRestore.Annotations[AnnotationTraceID]
 		taskName := fmt.Sprintf("应用恢复 %s 执行恢复 %s", appRestore.Name, restoreName)
@@ -185,12 +212,18 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 		// 恢复失败事件
 		user := appRestore.Annotations[AnnotationUser]
 		if user == "" {
-			user = "system"
+			user = defaultAppRestoreUser
 		}
 		triggeredBy := appRestore.Annotations[AnnotationTraceID]
 		taskName := fmt.Sprintf("应用恢复 %s 执行恢复 %s", appRestore.Name, restoreName)
 		errorCode := "RestoreFailed"
 		failMsg := buildRestoreFailureMessage(restore, "恢复失败")
+		if isDataSyncTrafficlessAppRestore(appRestore) {
+			return r.beginDataSyncTrafficlessTermination(
+				ctx, cli, appRestore, restore, restoreName, errorCode, failMsg,
+				dataSyncTrafficlessTerminationOutcomeFail, cfg,
+			)
+		}
 		appRestore.Status.Reason = errorCode
 		appRestore.Status.Message = failMsg
 		helper.ReportTaskFinishedWithClient(ctx, r.Client, r.Scheme, appRestore, taskName, appRestore.Spec.Cluster, helper.TaskStatusFailed, restore.Status.StartTimestamp, restore.Status.CompletionTimestamp, user, triggeredBy, failMsg, errorCode)
@@ -201,12 +234,18 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 		// 部分恢复失败事件
 		user := appRestore.Annotations[AnnotationUser]
 		if user == "" {
-			user = "system"
+			user = defaultAppRestoreUser
 		}
 		triggeredBy := appRestore.Annotations[AnnotationTraceID]
 		taskName := fmt.Sprintf("应用恢复 %s 执行恢复 %s", appRestore.Name, restoreName)
 		errorCode := "RestorePartiallyFailed"
 		failMsg := buildRestoreFailureMessage(restore, "恢复部分失败")
+		if isDataSyncTrafficlessAppRestore(appRestore) {
+			return r.beginDataSyncTrafficlessTermination(
+				ctx, cli, appRestore, restore, restoreName, errorCode, failMsg,
+				dataSyncTrafficlessTerminationOutcomeFail, cfg,
+			)
+		}
 		appRestore.Status.Reason = errorCode
 		appRestore.Status.Message = failMsg
 		helper.ReportTaskFinishedWithClient(ctx, r.Client, r.Scheme, appRestore, taskName, appRestore.Spec.Cluster, helper.TaskStatusFailed, restore.Status.StartTimestamp, restore.Status.CompletionTimestamp, user, triggeredBy, failMsg, errorCode)
@@ -218,6 +257,12 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 			timeoutErr := fmt.Errorf("timeout waiting for restore to complete after %s", timeout)
 			logger.Error(timeoutErr, "timeout waiting for restore to complete", "timeout", timeout)
 			r.Recorder.Event(appRestore, corev1.EventTypeWarning, "RestoreTimeout", fmt.Sprintf("Timed out after %s", timeout))
+			if isDataSyncTrafficlessAppRestore(appRestore) {
+				return r.beginDataSyncTrafficlessTermination(
+					ctx, cli, appRestore, restore, restoreName, "TimeoutExceeded", timeoutErr.Error(),
+					dataSyncTrafficlessTerminationOutcomeFail, cfg,
+				)
+			}
 
 			// Force terminate
 			if err := r.forceTerminateRestore(ctx, cli, appRestore, restore); err != nil {
@@ -235,7 +280,7 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 			appRestore.Status.Message = failMsg
 			user := appRestore.Annotations[AnnotationUser]
 			if user == "" {
-				user = "system"
+				user = defaultAppRestoreUser
 			}
 			triggeredBy := appRestore.Annotations[AnnotationTraceID]
 			taskName := fmt.Sprintf("应用恢复 %s 执行恢复 %s", appRestore.Name, restoreName)
@@ -253,6 +298,12 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 			timeoutErr := fmt.Errorf("restore in unknown state for too long (timeout %s)", timeout)
 			logger.Error(timeoutErr, "restore in unknown state for too long", "timeout", timeout)
 			r.Recorder.Event(appRestore, corev1.EventTypeWarning, "RestoreTimeout", "Restore in unknown state for too long")
+			if isDataSyncTrafficlessAppRestore(appRestore) {
+				return r.beginDataSyncTrafficlessTermination(
+					ctx, cli, appRestore, restore, restoreName, "TimeoutExceeded", timeoutErr.Error(),
+					dataSyncTrafficlessTerminationOutcomeFail, cfg,
+				)
+			}
 
 			// Force terminate
 			if err := r.forceTerminateRestore(ctx, cli, appRestore, restore); err != nil {
@@ -270,7 +321,7 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 			appRestore.Status.Message = failMsg
 			user := appRestore.Annotations[AnnotationUser]
 			if user == "" {
-				user = "system"
+				user = defaultAppRestoreUser
 			}
 			triggeredBy := appRestore.Annotations[AnnotationTraceID]
 			taskName := fmt.Sprintf("应用恢复 %s 执行恢复 %s", appRestore.Name, restoreName)
@@ -448,6 +499,30 @@ func (r *AppRestoreReconciler) autoRetryOrFailStalledRestore(
 
 	retryLimit := resolveRestoreRetryLimit(stallType, cfg)
 	retryCount := getRestoreRetryCount(appRestore, stallType)
+	if isDataSyncTrafficlessAppRestore(appRestore) {
+		if retryCount < retryLimit {
+			setRestoreRetryCount(appRestore, stallType, retryCount+1)
+			retryMessage := fmt.Sprintf(
+				"%s; auto-retry waits for the previous Velero Restore to disappear (stallType=%s %d/%d)",
+				stallMessage, stallType, retryCount+1, retryLimit,
+			)
+			r.Recorder.Event(appRestore, corev1.EventTypeNormal, "RestoreAutoRetryTriggered", retryMessage)
+			return r.beginDataSyncTrafficlessTermination(
+				ctx, cli, appRestore, restore, restoreName, stallReason, retryMessage,
+				dataSyncTrafficlessTerminationOutcomeRetry, cfg,
+			)
+		}
+
+		failReason := appRestoreReasonStalledAfterRetry
+		failMsg := fmt.Sprintf(
+			"%s; stallType=%s autoRetry=%d/%d exhausted",
+			stallMessage, stallType, retryCount, retryLimit,
+		)
+		return r.beginDataSyncTrafficlessTermination(
+			ctx, cli, appRestore, restore, restoreName, failReason, failMsg,
+			dataSyncTrafficlessTerminationOutcomeFail, cfg,
+		)
+	}
 	if retryCount < retryLimit {
 		if restore != nil {
 			if err := cli.Delete(ctx, restore); err != nil && !apierrors.IsNotFound(err) {
@@ -474,7 +549,7 @@ func (r *AppRestoreReconciler) autoRetryOrFailStalledRestore(
 		return disasterv1.PhaseRestoring, ctrl.Result{RequeueAfter: cfg.RetryBackoff}, nil
 	}
 
-	failReason := "RestoreStalledAfterRetry"
+	failReason := appRestoreReasonStalledAfterRetry
 	failMsg := fmt.Sprintf(
 		"%s; stallType=%s autoRetry=%d/%d exhausted",
 		stallMessage, stallType, retryCount, retryLimit,
@@ -495,7 +570,7 @@ func (r *AppRestoreReconciler) autoRetryOrFailStalledRestore(
 	appRestore.Status.Message = failMsg
 	user := appRestore.Annotations[AnnotationUser]
 	if user == "" {
-		user = "system"
+		user = defaultAppRestoreUser
 	}
 	triggeredBy := appRestore.Annotations[AnnotationTraceID]
 	taskName := fmt.Sprintf("应用恢复 %s 执行恢复 %s", appRestore.Name, restoreName)
@@ -906,7 +981,7 @@ func (r *AppRestoreReconciler) handleRestoreNotFound(
 		}
 		user := appRestore.Annotations[AnnotationUser]
 		if user == "" {
-			user = "system"
+			user = defaultAppRestoreUser
 		}
 		triggeredBy := appRestore.Annotations[AnnotationTraceID]
 		taskName := fmt.Sprintf("应用恢复 %s 执行恢复 %s", appRestore.Name, restoreName)
@@ -1027,6 +1102,19 @@ func (r *AppRestoreReconciler) detectPodVolumeRestoreIssue(
 	restoreTimeout time.Duration,
 	pendingPhaseMaxWait time.Duration,
 ) (reason, message string, err error) {
+	return r.detectPodVolumeRestoreIssueWithInProgress(
+		ctx, cli, restoreName, restoreTimeout, pendingPhaseMaxWait, false,
+	)
+}
+
+func (r *AppRestoreReconciler) detectPodVolumeRestoreIssueWithInProgress(
+	ctx context.Context,
+	cli client.Client,
+	restoreName string,
+	restoreTimeout time.Duration,
+	pendingPhaseMaxWait time.Duration,
+	includeInProgress bool,
+) (reason, message string, err error) {
 	if restoreName == "" {
 		return "", "", nil
 	}
@@ -1072,7 +1160,7 @@ func (r *AppRestoreReconciler) detectPodVolumeRestoreIssue(
 			continue
 		}
 
-		if !isPodVolumeRestorePendingPhase(pvr.Status.Phase) {
+		if !isPodVolumeRestoreStallPhase(pvr.Status.Phase, includeInProgress) {
 			continue
 		}
 
@@ -1094,11 +1182,11 @@ func (r *AppRestoreReconciler) detectPodVolumeRestoreIssue(
 		if failedMsg != "" {
 			msg = fmt.Sprintf("%s: %s", msg, failedMsg)
 		}
-		return "PodVolumeRestoreFailed", msg, nil
+		return appRestoreReasonPVRFailed, msg, nil
 	}
 
 	if stalledCount > 0 {
-		return "PodVolumeRestoreStalled",
+		return appRestoreReasonPVRStalled,
 			fmt.Sprintf("PodVolumeRestore stalled in pending phase for over %s (%d/%d), first=%s phase=%s",
 				pendingStallTimeout.Round(time.Second), stalledCount, len(pvrList.Items), stalledName, stalledPhase),
 			nil
@@ -1107,7 +1195,7 @@ func (r *AppRestoreReconciler) detectPodVolumeRestoreIssue(
 	return "", "", nil
 }
 
-func isPodVolumeRestorePendingPhase(phase velerov1.PodVolumeRestorePhase) bool {
+func isPodVolumeRestoreStallPhase(phase velerov1.PodVolumeRestorePhase, includeInProgress bool) bool {
 	switch phase {
 	case "",
 		velerov1.PodVolumeRestorePhaseNew,
@@ -1115,6 +1203,8 @@ func isPodVolumeRestorePendingPhase(phase velerov1.PodVolumeRestorePhase) bool {
 		velerov1.PodVolumeRestorePhasePrepared,
 		velerov1.PodVolumeRestorePhaseCanceling:
 		return true
+	case velerov1.PodVolumeRestorePhaseInProgress:
+		return includeInProgress
 	default:
 		return false
 	}

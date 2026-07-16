@@ -39,6 +39,24 @@
 ### Requirement: 动态镜像重写 MUST 跳过 forbidden path
 动态镜像重写扫描源资源时必须 (MUST) 只基于可修改 spec 路径生成规则，并且必须 (MUST) 跳过现有资源修改器治理禁止的路径。
 
+#### Scenario: 工作负载 initContainers 镜像进入运行时规则
+- **Given** 一个 Deployment、Job、ReplicaSet 或 ReplicationController 的 PodSpec 包含 `initContainers[].image`
+- **And** 该 initContainer 镜像命中 `rewriteImage` 的 `sourcePrefix`
+- **When** 系统编译动态镜像重写规则
+- **Then** 系统必须 (MUST) 为对应的 `/spec/.../initContainers/<index>/image` 生成规则
+- **And** 该规则必须 (MUST) 保留 initContainer 原有数组下标
+
+### Requirement: Drill 未提供覆盖策略时 MUST 继承实例动态镜像重写
+当 Drill 没有配置 Drill 级资源修改器或批量修改器时，系统必须 (MUST) 保留实例级 `restorePolicy`，不得通过一个无业务含义的空 `restorePolicy` 覆盖实例的 `rewriteImage` 动作。
+
+#### Scenario: 未配置 Drill 级修改器的演练重写多个 initContainers
+- **Given** `DisasterInstance.spec.restorePolicy.bulkModifierActions` 包含 `applyTo=["drill"]` 的 `rewriteImage` 动作
+- **And** 源集群的 Deployment 包含两个命中前缀的 `initContainers[].image`
+- **And** 用户未配置 Drill 级资源定制化修改或批量修改
+- **When** 系统创建本次 Drill 的资源 `AppRestore`
+- **Then** Drill 请求不得 (MUST NOT) 携带空的 `restorePolicy` 覆盖
+- **And** `AppRestore.spec.resourceModifierRules` 必须 (MUST) 包含两个对应的 `/spec/template/spec/initContainers/<index>/image` 运行时规则
+
 #### Scenario: Pod status image 不进入运行时规则
 - **Given** 一个 Pod 同时包含 `/spec/containers/0/image` 和 `/status/containerStatuses/0/image`
 - **And** 两个字段的镜像值均匹配 `rewriteImage` 的 `sourcePrefix`

@@ -48,6 +48,10 @@ const (
 	RestoreModeReuse RestoreMode = "Reuse"
 	// RestoreModeFullRestore 完整恢复模式：需要创建 AppRestore 恢复数据
 	RestoreModeFullRestore RestoreMode = "FullRestore"
+	// RestoreModeResourceOnly 纯资源恢复模式：恢复资源后直接扩容，不执行数据恢复
+	RestoreModeResourceOnly RestoreMode = "ResourceOnly"
+	// RestoreModeMixed 混合模式：仅用于容灾组聚合状态，子操作必须使用具体模式
+	RestoreModeMixed RestoreMode = "Mixed"
 )
 
 // DrillStep 定义演练执行步骤
@@ -126,8 +130,12 @@ type DisasterDrillStatus struct {
 	TargetCluster string `json:"targetCluster,omitempty"`
 
 	// RestoreMode 恢复模式
-	// +kubebuilder:validation:Enum=Reuse;FullRestore
+	// +kubebuilder:validation:Enum=Reuse;FullRestore;ResourceOnly;Mixed
 	RestoreMode RestoreMode `json:"restoreMode,omitempty"`
+
+	// InstanceRestoreModes 记录 Ready 阶段逐实例冻结的恢复模式
+	// +optional
+	InstanceRestoreModes map[string]RestoreMode `json:"instanceRestoreModes,omitempty"`
 
 	// RestoreName 演练创建的 AppRestore 名称 (仅完整恢复模式)
 	RestoreName string `json:"restoreName,omitempty"`

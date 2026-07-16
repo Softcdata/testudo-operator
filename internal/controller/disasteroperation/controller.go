@@ -40,6 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	ctrlcommon "github.com/softcdata/testudo-operator/internal/controller"
 	"github.com/softcdata/testudo-operator/internal/controller/imagemapping"
 	"github.com/softcdata/testudo-operator/internal/controller/restore"
 	runtimecfg "github.com/softcdata/testudo-operator/internal/controller/runtimeconfig"
@@ -122,6 +123,50 @@ func cloneBoolPtr(in *bool) *bool {
 	}
 	v := *in
 	return &v
+}
+
+func effectiveDrillRestoreMode(config *disasterv1.DrillConfig) disasterv1.RestoreMode {
+	if config != nil && config.RestoreMode == disasterv1.RestoreModeResourceOnly {
+		return disasterv1.RestoreModeResourceOnly
+	}
+	return disasterv1.RestoreModeFullRestore
+}
+
+func drillOperationSteps(mode disasterv1.RestoreMode) []string {
+	steps := []string{string(disasterv1.DrillOperationStepRestoreResource)}
+	if mode != disasterv1.RestoreModeResourceOnly {
+		steps = append(steps, string(disasterv1.DrillOperationStepRestoreData))
+	}
+	return append(steps, string(disasterv1.DrillOperationStepScaleUp))
+}
+
+func drillConfigForGroupChild(
+	parent *disasterv1.DrillConfig,
+	operationType disasterv1.OperationType,
+	instanceName string,
+) (*disasterv1.DrillConfig, error) {
+	if parent == nil {
+		return nil, nil
+	}
+	child := parent.DeepCopy()
+	if operationType != disasterv1.OperationTypeDrill {
+		return child, nil
+	}
+
+	if len(parent.InstanceRestoreModes) > 0 {
+		mode, exists := parent.InstanceRestoreModes[instanceName]
+		if !exists {
+			return nil, fmt.Errorf("组 DrillConfig 缺少实例 %s 的恢复模式", instanceName)
+		}
+		if mode != disasterv1.RestoreModeFullRestore && mode != disasterv1.RestoreModeResourceOnly {
+			return nil, fmt.Errorf("组 DrillConfig 中实例 %s 的恢复模式无效: %s", instanceName, mode)
+		}
+		child.RestoreMode = mode
+	} else {
+		child.RestoreMode = effectiveDrillRestoreMode(parent)
+	}
+	child.InstanceRestoreModes = nil
+	return child, nil
 }
 
 func operationTypeDisplayName(opType disasterv1.OperationType) string {
@@ -2774,16 +2819,11 @@ func (r *DisasterOperationReconciler) handleDrill(ctx context.Context, log logr.
 		targetCluster = drillConfig.TargetCluster
 	}
 
-	// 演练始终使用完整恢复模式
-	restoreMode := disasterv1.RestoreModeFullRestore
+	restoreMode := effectiveDrillRestoreMode(drillConfig)
 
-	// 初始化步骤：恢复资源 -> 恢复数据 -> 扩容
+	// ResourceOnly 省略数据恢复；历史空模式保持完整恢复。
 	if len(operation.Status.Steps) == 0 {
-		steps := []string{
-			string(disasterv1.DrillOperationStepRestoreResource),
-			string(disasterv1.DrillOperationStepRestoreData),
-			string(disasterv1.DrillOperationStepScaleUp),
-		}
+		steps := drillOperationSteps(restoreMode)
 		for _, stepName := range steps {
 			operation.Status.Steps = append(operation.Status.Steps, disasterv1.StepStatus{
 				Name:  stepName,
@@ -2938,6 +2978,9 @@ func (r *DisasterOperationReconciler) executeDrillStep(ctx context.Context, log 
 		// 恢复资源：从 ResourceSync 备份恢复 K8s 资源
 		return r.executeDrillRestoreResource(ctx, log, instance, operation, targetCluster)
 	case disasterv1.DrillOperationStepRestoreData:
+		if restoreMode == disasterv1.RestoreModeResourceOnly {
+			return true, nil
+		}
 		// 恢复数据：从 DataSync 备份恢复 PVC 数据
 		return r.executeDrillRestoreData(ctx, log, instance, operation, targetCluster)
 	case disasterv1.DrillOperationStepScaleUp:
@@ -3131,19 +3174,12 @@ func resolveDrillDataRestoreHooks(instance *disasterv1.DisasterInstance, drillCo
 	return instance.Spec.VeleroHooks.DataRestore
 }
 
-func makeDrillTrafficlessModifiersFromDataSync(dataSync *disasterv1.DataSync) []disasterv1.ResourceModifierRule {
-	if dataSync == nil || dataSync.Spec.TrafficlessConfig == nil {
-		return nil
-	}
-
-	image := strings.TrimSpace(dataSync.Spec.TrafficlessConfig.Image)
-	command := dataSync.Spec.TrafficlessConfig.Command
-	if image == "" && len(command) == 0 {
-		return nil
-	}
+func makeDrillTrafficlessModifiers(runtime ctrlcommon.TrafficlessRuntime) []disasterv1.ResourceModifierRule {
+	image := runtime.Image
 	if image == "" {
-		image = "busybox:1.36"
+		image = ctrlcommon.DefaultTrafficlessImage
 	}
+	command := runtime.Command
 	if len(command) == 0 {
 		command = []string{"sleep", "3600"}
 	}
@@ -3152,35 +3188,55 @@ func makeDrillTrafficlessModifiersFromDataSync(dataSync *disasterv1.DataSync) []
 		commandJSON = []byte(`["sleep","3600"]`)
 	}
 
+	podPatches := []disasterv1.JSONPatch{
+		{
+			Operation: "add",
+			Path:      "/metadata/labels",
+			Value:     `{"trafficless": "true"}`,
+		},
+		{
+			Operation: "add",
+			Path:      "/metadata/ownerReferences",
+			Value:     "[]",
+		},
+		{
+			Operation: "add",
+			Path:      "/spec/nodeName",
+			Value:     "",
+		},
+		{
+			Operation: "add",
+			Path:      "/spec/nodeSelector",
+			Value:     "{}",
+		},
+		{
+			Operation: "add",
+			Path:      "/spec/affinity",
+			Value:     "{}",
+		},
+		{
+			Operation: "replace",
+			Path:      "/spec/containers/0/image",
+			Value:     image,
+		},
+		{
+			Operation: "add",
+			Path:      "/spec/containers/0/command",
+			Value:     string(commandJSON),
+		},
+		{
+			Operation: "add",
+			Path:      "/spec/containers/0/args",
+			Value:     "[]",
+		},
+	}
+	if pullSecretPatch, ok := ctrlcommon.TrafficlessImagePullSecretsPatch(runtime.PullSecretName); ok {
+		podPatches = append(podPatches, pullSecretPatch)
+	}
+
 	return []disasterv1.ResourceModifierRule{{
 		Conditions: disasterv1.Conditions{GroupResource: "pods"},
-		Patches: []disasterv1.JSONPatch{
-			{
-				Operation: "add",
-				Path:      "/metadata/labels",
-				Value:     `{"trafficless": "true"}`,
-			},
-			{
-				Operation: "add",
-				Path:      "/metadata/ownerReferences",
-				Value:     "[]",
-			},
-			{
-				Operation: "replace",
-				Path:      "/spec/containers/0/image",
-				Value:     image,
-			},
-			{
-				Operation: "add",
-				Path:      "/spec/containers/0/command",
-				Value:     string(commandJSON),
-			},
-			{
-				Operation: "add",
-				Path:      "/spec/containers/0/args",
-				Value:     "[]",
-			},
-		},
+		Patches:    podPatches,
 	}}
 }
 
@@ -3255,6 +3311,24 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 	if drillConfig != nil && len(drillConfig.NamespaceMapping) > 0 {
 		namespaceMapping = drillConfig.NamespaceMapping
 	}
+
+	trafficlessRuntime, trafficlessCluster, err := ctrlcommon.ResolveTrafficlessRuntime(ctx, r.Client, targetCluster, dataSync.Spec.TrafficlessConfig)
+	if err != nil {
+		return false, err
+	}
+	var targetClient client.Client
+	if trafficlessRuntime.PullSecretName != "" {
+		c, err := r.getClusterClient(ctx, targetCluster)
+		if err != nil {
+			return false, fmt.Errorf("build target cluster client for trafficless registry secret: %w", err)
+		}
+		targetClient = c
+		targetNamespaces := ctrlcommon.TrafficlessRestoreNamespaces(instance.Spec.Namespaces, namespaceMapping)
+		if _, err := ctrlcommon.SyncTrafficlessRegistryPullSecret(ctx, r.Client, targetClient, trafficlessCluster, targetNamespaces); err != nil {
+			return false, fmt.Errorf("sync drill trafficless registry pull secret: %w", err)
+		}
+	}
+
 	preparedDrillDataRestoreHooks, hookMarkerRules := restore.PrepareTrafficlessDataRestoreHooks(
 		drillDataRestoreHooks,
 		instance.Spec.Namespaces,
@@ -3262,7 +3336,7 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 	)
 	hasRestorePolicy := instance.Spec.RestorePolicy != nil || drillRestorePolicy != nil
 
-	dataModifiers := makeDrillTrafficlessModifiersFromDataSync(dataSync)
+	dataModifiers := makeDrillTrafficlessModifiers(trafficlessRuntime)
 
 	// 使用共享构建器
 	restoreSpec := restore.BuildAppRestoreSpec(restore.BuilderConfig{
@@ -3287,13 +3361,14 @@ func (r *DisasterOperationReconciler) executeDrillRestoreData(ctx context.Contex
 		restoreSpec.ResourceModifierRules = append(restoreSpec.ResourceModifierRules, cleanupRule)
 	}
 
-	var targetClient client.Client
 	if restore.RequiresTargetClassValidationWithOverride(instance, drillRestorePolicy) {
-		c, err := r.getClusterClient(ctx, targetCluster)
-		if err != nil {
-			return false, fmt.Errorf("build target cluster client for restore policy: %w", err)
+		if targetClient == nil {
+			c, err := r.getClusterClient(ctx, targetCluster)
+			if err != nil {
+				return false, fmt.Errorf("build target cluster client for restore policy: %w", err)
+			}
+			targetClient = c
 		}
-		targetClient = c
 	}
 	applyOpts := []restore.ApplyInstanceRestorePolicyOption{
 		restore.WithBaselineClusters(config.Spec.SourceCluster, config.Spec.TargetCluster),
@@ -4001,6 +4076,12 @@ func (r *DisasterOperationReconciler) handleGroupOperation(ctx context.Context, 
 		err := r.Get(ctx, client.ObjectKey{Namespace: operation.Namespace, Name: childOpName}, childOp)
 
 		if errors.IsNotFound(err) {
+			childDrillConfig, configErr := drillConfigForGroupChild(operation.Spec.DrillConfig, operation.Spec.OperationType, instanceName)
+			if configErr != nil {
+				anyFailed = true
+				failedMessage = configErr.Error()
+				break
+			}
 			// 创建子 Operation
 			newOp := &disasterv1.DisasterOperation{
 				ObjectMeta: metav1.ObjectMeta{
@@ -4021,7 +4102,7 @@ func (r *DisasterOperationReconciler) handleGroupOperation(ctx context.Context, 
 					SkipPodReadyCheck:   cloneBoolPtr(operation.Spec.SkipPodReadyCheck),
 					WaitUntilReady:      operation.Spec.WaitUntilReady,
 					RetryPolicy:         operation.Spec.RetryPolicy,
-					DrillConfig:         operation.Spec.DrillConfig, // 透传演练配置
+					DrillConfig:         childDrillConfig,
 				},
 			}
 			// Propagate trace ID

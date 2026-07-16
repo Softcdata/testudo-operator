@@ -1,5 +1,7 @@
 # 镜像源映射真实环境联调手册（170/171）
 
+> 维护说明：本文保留旧 `Cluster.spec.imageSources` + `DisasterConfig.spec.imageRewrite` 联调流程，主要用于历史排障和旧实例回放。新实例的推荐路径是 `DisasterInstance.spec.restorePolicy.bulkModifierActions[].action=rewriteImage`，详见 `docs/restore-policy-usage.md`。`rewriteImage` 会在 ResourceSync/Drill 恢复构建时读取源集群当前镜像，已覆盖 `containers`、`initContainers` 和 `ephemeralContainers` 的镜像前缀改写。
+
 ## 1. 目标与范围
 
 本手册用于在真实环境验证以下链路是否生效：
