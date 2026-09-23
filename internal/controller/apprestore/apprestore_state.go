@@ -96,8 +96,11 @@ func (h *PendingHandler) Handle(ctx context.Context, r *AppRestoreReconciler, ap
 		// BSL Name = {StorageRepository}-{SourceCluster}
 		// Prefix = {SourceCluster}
 		bslName := sr.Name + "-" + appRestore.Spec.SourceCluster
-		var defaultBSL DefaultBSL
-		err = defaultBSL.ApplyStorageRepository(ctx, r.Client, cli, sr, bslName, appRestore.Spec.SourceCluster)
+		targetCluster, err := GetClusterByClusterName(ctx, r.Client, appRestore.Spec.Cluster)
+		if err != nil {
+			return disasterv1.PhasePending, ctrl.Result{RequeueAfter: 5 * time.Second}, fmt.Errorf("failed to load target cluster %q for BSL: %w", appRestore.Spec.Cluster, err)
+		}
+		err = (&DefaultBSL{}).ApplyStorageRepositoryForCluster(ctx, r.Client, cli, targetCluster, sr, bslName, appRestore.Spec.SourceCluster)
 		if err != nil {
 			logger.Error(err, "error applying storage repository")
 			r.Recorder.Event(appRestore, corev1.EventTypeWarning, "ApplyStorageRepositoryFailed", err.Error())

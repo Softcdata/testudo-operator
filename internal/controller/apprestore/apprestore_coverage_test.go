@@ -75,6 +75,14 @@ var _ = Describe("AppRestore Coverage Expansion", func() {
 		_ = k8sClient.Create(ctx, nsObj)
 		veleroNs := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: controller.VeleroNamespace}}
 		_ = k8sClient.Create(ctx, veleroNs)
+		for _, clusterName := range []string{"target-cluster", "test-cluster"} {
+			if err := k8sClient.Create(ctx, &disasterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Name: clusterName},
+				Spec:       disasterv1.ClusterSpec{KubeConfig: []byte("fake-kubeconfig")},
+			}); err != nil && !apierrors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		}
 	})
 
 	Context("PendingHandler Logic", func() {
@@ -792,7 +800,7 @@ var _ = Describe("AppRestore Coverage Expansion", func() {
 					sr.Name = "repo-1"
 					sr.Spec.Bucket = "bucket"
 					sr.Spec.Region = "region"
-					sr.Spec.Endpoint = "endpoint"
+					sr.Spec.Endpoint = "http://endpoint:9000"
 					return nil
 				}
 				if _, ok := obj.(*corev1.Secret); ok {

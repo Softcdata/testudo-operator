@@ -87,10 +87,13 @@ func (h *PendingHandler) Handle(ctx context.Context, r *AppBackupReconciler, app
 		logger.Error(err, "error getting storage repository")
 		return PhasePending, ctrl.Result{}, err
 	}
-	var defaultBSL DefaultBSL
 	// 5. Apply StorageRepository
 	bslName := sr.Name + "-" + appBackup.Spec.Cluster
-	err = defaultBSL.ApplyStorageRepository(ctx, r.Client, cli, sr, bslName, appBackup.Spec.Cluster)
+	cluster, err := GetClusterByClusterName(ctx, r.Client, appBackup.Spec.Cluster)
+	if err != nil {
+		return PhasePending, ctrl.Result{}, fmt.Errorf("failed to load target cluster %q for BSL: %w", appBackup.Spec.Cluster, err)
+	}
+	err = (&DefaultBSL{}).ApplyStorageRepositoryForCluster(ctx, r.Client, cli, cluster, sr, bslName, appBackup.Spec.Cluster)
 	if err != nil {
 		// Check if it's a BSL unavailable error
 		if err.Error() == fmt.Sprintf("BackupStorageLocation %s is in Unavailable status", bslName) {

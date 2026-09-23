@@ -17,14 +17,16 @@ import (
 )
 
 type BSL interface {
-	ApplyStorageRepository(ctx context.Context, source client.Reader, target client.Client, sr *disasterv1.StorageRepository, bslName, prefix string) error
+	ApplyStorageRepositoryForCluster(ctx context.Context, source client.Reader, target client.Client, cluster *disasterv1.Cluster, sr *disasterv1.StorageRepository, bslName, prefix string) error
 }
 type DefaultBSL struct{}
 
-// 每次操作 Storage 调用，刷新Velero BSL
-// 刷新业务层storage和velero bsl 映射关系
-// todo：无法保证事务
-func (d *DefaultBSL) ApplyStorageRepository(ctx context.Context, source client.Reader, target client.Client, sr *disasterv1.StorageRepository, bslName, prefix string) error {
+// ApplyStorageRepositoryForCluster refreshes the Velero BSL mapping for one
+// physical target cluster. The target cluster owns the optional endpoint override.
+func (d *DefaultBSL) ApplyStorageRepositoryForCluster(ctx context.Context, source client.Reader, target client.Client, cluster *disasterv1.Cluster, sr *disasterv1.StorageRepository, bslName, prefix string) error {
+	if cluster == nil {
+		return fmt.Errorf("target cluster context is required to apply BackupStorageLocation")
+	}
 	logger := logf.FromContext(ctx)
 
 	settings, err := resolveStorageRuntimeSettings(ctx, source, sr)
@@ -32,6 +34,12 @@ func (d *DefaultBSL) ApplyStorageRepository(ctx context.Context, source client.R
 		logger.Error(err, "unable to resolve StorageRepository runtime settings")
 		return err
 	}
+	settings.Endpoint, settings.EndpointSource, err = resolveBSLEndpoint(cluster, settings.Endpoint)
+	if err != nil {
+		logger.Error(err, "unable to resolve BSL endpoint", "cluster", cluster.Name)
+		return err
+	}
+	logger.Info("resolved BSL endpoint", "cluster", cluster.Name, "endpointSource", settings.EndpointSource, "s3Url", settings.Endpoint)
 
 	err = d.updateSecret(ctx, target, sr)
 	if err != nil {
@@ -123,8 +131,8 @@ func (d *DefaultBSL) updateBackupStorageLocation(ctx context.Context, cli client
 		bsl.Spec.Config["region"] = sr.Spec.Region
 		needUpdate = true
 	}
-	if bsl.Spec.Config["s3Url"] != sr.Spec.Endpoint {
-		bsl.Spec.Config["s3Url"] = sr.Spec.Endpoint
+	if bsl.Spec.Config["s3Url"] != settings.Endpoint {
+		bsl.Spec.Config["s3Url"] = settings.Endpoint
 		needUpdate = true
 	}
 	desiredPathStyle := strconv.FormatBool(settings.UsePathStyle)

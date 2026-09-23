@@ -586,7 +586,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 		// 3. Apply BSL
 		bslName := fmt.Sprintf("%s-%s", storageName, bslClusterName)
-		if err := r.BSL.ApplyStorageRepository(ctx, r.Client, remoteCli, sr, bslName, bslClusterName); err != nil {
+		if err := r.BSL.ApplyStorageRepositoryForCluster(ctx, r.Client, remoteCli, cluster, sr, bslName, bslClusterName); err != nil {
 			logger.Error(err, "failed to apply BSL for signal")
 			return ctrl.Result{}, err
 		}
@@ -1660,7 +1660,8 @@ func (r *ClusterReconciler) InstallVeleroInCluster(ctx context.Context, cluster 
 		"--install",
 		"--create-namespace",
 		"--cleanup-on-fail",
-		"--no-hooks", // 跳过 CRD 安装 Hook，因为已手动安装
+		"--no-hooks",  // 跳过 CRD 安装 Hook，因为已手动安装
+		"--skip-crds", // CRD 已在上一步由 Operator 应用
 		"--timeout", clusterVeleroInstallTimeout(),
 		"-n", VeleroNamespace,
 		"-f", valuesPath,

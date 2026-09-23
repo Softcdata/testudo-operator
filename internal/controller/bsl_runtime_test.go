@@ -69,7 +69,8 @@ var _ = Describe("DefaultBSL runtime settings", func() {
 			targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 			bsl := &DefaultBSL{}
-			err := bsl.ApplyStorageRepository(ctx, sourceClient, targetClient, sr, "repo-cluster-a", "cluster-a")
+			cluster := &disasterv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}
+			err := bsl.ApplyStorageRepositoryForCluster(ctx, sourceClient, targetClient, cluster, sr, "repo-cluster-a", "cluster-a")
 			Expect(err).To(MatchError("BackupStorageLocation repo-cluster-a is in Unavailable status"), tc.name)
 
 			actual := &velerov1.BackupStorageLocation{}

@@ -6,7 +6,9 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	disasterv1 "github.com/softcdata/testudo-operator/pkg/apis/disaster/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,11 +16,47 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+func resolveBSLEndpoint(cluster *disasterv1.Cluster, defaultEndpoint string) (string, string, error) {
+	if cluster == nil {
+		return "", "", fmt.Errorf("target cluster context is required to resolve BSL endpoint")
+	}
+	override := ""
+	if cluster.Spec.VeleroInstall != nil {
+		override = strings.TrimSpace(cluster.Spec.VeleroInstall.BSLEndpoint)
+	}
+	if override != "" {
+		if err := validateBSLEndpoint(override); err != nil {
+			return "", "", fmt.Errorf("cluster %q bslEndpoint is invalid: %w", cluster.Name, err)
+		}
+		return override, "clusterOverride", nil
+	}
+	defaultEndpoint = strings.TrimSpace(defaultEndpoint)
+	if err := validateBSLEndpoint(defaultEndpoint); err != nil {
+		return "", "", fmt.Errorf("BSL controller default endpoint is invalid: %w", err)
+	}
+	return defaultEndpoint, "controllerDefault", nil
+}
+
+func validateBSLEndpoint(endpoint string) error {
+	if endpoint == "" {
+		return fmt.Errorf("endpoint is empty")
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" {
+		return fmt.Errorf("endpoint must be an absolute URL with scheme and host")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("endpoint must not contain user info, query, or fragment")
+	}
+	return nil
+}
+
 type StorageRuntimeSettings struct {
-	Endpoint     string
-	Region       string
-	UsePathStyle bool
-	CACert       []byte
+	Endpoint       string
+	EndpointSource string
+	Region         string
+	UsePathStyle   bool
+	CACert         []byte
 }
 
 func resolveStorageRuntimeSettings(ctx context.Context, reader client.Reader, sr *disasterv1.StorageRepository) (StorageRuntimeSettings, error) {

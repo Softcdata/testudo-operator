@@ -137,7 +137,7 @@ func GetKubeClientSetWithCluster(ctx context.Context, cli client.Client, scheme 
 }
 
 // 获取集群的 kubeconfig
-func GetClusterByClusterName(ctx context.Context, cli client.Client, clsutername string) (*disasterv1.Cluster, error) {
+func GetClusterByClusterName(ctx context.Context, cli client.Reader, clsutername string) (*disasterv1.Cluster, error) {
 	cluster := &disasterv1.Cluster{}
 	err := cli.Get(ctx, types.NamespacedName{Name: clsutername}, cluster)
 	if err != nil {

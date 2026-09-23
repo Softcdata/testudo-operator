@@ -794,9 +794,12 @@ func (h *ReadyHandler) ensureBSL(ctx context.Context, r *AppBackupReconciler, cl
 		return "", err
 	}
 
-	var defaultBSL DefaultBSL
 	bslName := sr.Name + "-" + appBackup.Spec.Cluster
-	err = defaultBSL.ApplyStorageRepository(ctx, r.Client, cli, sr, bslName, appBackup.Spec.Cluster)
+	cluster, err := GetClusterByClusterName(ctx, r.Client, appBackup.Spec.Cluster)
+	if err != nil {
+		return "", fmt.Errorf("failed to load target cluster %q for BSL: %w", appBackup.Spec.Cluster, err)
+	}
+	err = (&DefaultBSL{}).ApplyStorageRepositoryForCluster(ctx, r.Client, cli, cluster, sr, bslName, appBackup.Spec.Cluster)
 	if err != nil {
 		if err.Error() == fmt.Sprintf("BackupStorageLocation %s is in Unavailable status", bslName) {
 			logger.Info("BackupStorageLocation is unavailable", "bslName", bslName)

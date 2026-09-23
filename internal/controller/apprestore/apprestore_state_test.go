@@ -86,6 +86,10 @@ var _ = Describe("AppRestore State Machine", func() {
 		// Ensure namespaces
 		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
 		_ = fakeClient.Create(ctx, ns)
+		_ = fakeClient.Create(ctx, &disasterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
+			Spec:       disasterv1.ClusterSpec{KubeConfig: []byte("fake-kubeconfig")},
+		})
 	})
 
 	Context("PendingHandler", func() {

@@ -45,6 +45,9 @@ const (
 	appRestoreReasonPVRStalled          = "PodVolumeRestoreStalled"
 )
 
+const appRestoreReasonCompletedWithWarnings = "RestoreCompletedWithWarnings"
+const appRestoreReasonCompletedWithErrors = "RestoreCompletedWithErrors"
+
 var veleroRestartCooldown = 2 * time.Minute
 
 // RestoringHandler handles the Restoring phase of AppRestore
@@ -173,7 +176,7 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 	// Check restore status and determine next phase
 	switch restore.Status.Phase {
 	case velerov1.RestorePhaseCompleted:
-		logger.Info("Velero Restore completed successfully")
+		logger.Info("Velero Restore completed", "warnings", restore.Status.Warnings)
 		audit, verifyErr := r.verifyStorageClassRuleEffects(ctx, cli, appRestore)
 		applyModifierEffectAuditAnnotations(&appRestore.ObjectMeta, audit)
 
@@ -201,6 +204,25 @@ func (h *RestoringHandler) Handle(ctx context.Context, r *AppRestoreReconciler, 
 			r.Recorder.Event(appRestore, corev1.EventTypeWarning, errorCode, failMsg)
 			helper.ReportTaskFinishedWithClient(ctx, r.Client, r.Scheme, appRestore, taskName, appRestore.Spec.Cluster, helper.TaskStatusFailed, restore.Status.StartTimestamp, restore.Status.CompletionTimestamp, user, triggeredBy, failMsg, errorCode)
 			return disasterv1.PhaseFailed, ctrl.Result{}, nil
+		}
+		// Velero reports update/patch failures as warnings while still using the
+		// Completed phase. Treat restore warnings/errors as a partial failure so
+		// the AppRestore cannot claim success when business fields were skipped.
+		// The explicit none policy intentionally keeps its warning-only skip semantics.
+		if restore.Status.Errors > 0 ||
+			(restore.Status.Warnings > 0 && appRestore.Spec.Template.ExistingResourcePolicy != velerov1.PolicyTypeNone) {
+			errorCode := appRestoreReasonCompletedWithWarnings
+			fallback := "恢复完成但存在警告，部分资源可能未按 update 覆盖"
+			if restore.Status.Errors > 0 {
+				errorCode = appRestoreReasonCompletedWithErrors
+				fallback = "恢复完成但存在错误"
+			}
+			failMsg := buildRestoreFailureMessage(restore, fallback)
+			appRestore.Status.Reason = errorCode
+			appRestore.Status.Message = failMsg
+			r.Recorder.Event(appRestore, corev1.EventTypeWarning, errorCode, failMsg)
+			helper.ReportTaskFinishedWithClient(ctx, r.Client, r.Scheme, appRestore, taskName, appRestore.Spec.Cluster, helper.TaskStatusFailed, restore.Status.StartTimestamp, restore.Status.CompletionTimestamp, user, triggeredBy, failMsg, errorCode)
+			return disasterv1.PhasePartiallyFailed, ctrl.Result{}, nil
 		}
 
 		r.Recorder.Event(appRestore, corev1.EventTypeNormal, "RestoreCompleted", "Velero Restore completed successfully")
@@ -341,7 +363,7 @@ func buildRestoreFailureMessage(restore *velerov1.Restore, fallback string) stri
 	if restore.Status.FailureReason != "" {
 		return fmt.Sprintf("%s: %s", fallback, restore.Status.FailureReason)
 	}
-	if restore.Status.Errors > 0 {
+	if restore.Status.Errors > 0 || restore.Status.Warnings > 0 {
 		return fmt.Sprintf("%s: errors=%d warnings=%d", fallback, restore.Status.Errors, restore.Status.Warnings)
 	}
 	return fallback

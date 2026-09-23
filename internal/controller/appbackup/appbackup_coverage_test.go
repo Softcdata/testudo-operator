@@ -59,6 +59,12 @@ var _ = Describe("AppBackup Coverage Expansion", func() {
 		ctx = context.Background()
 		recorder = record.NewFakeRecorder(100)
 		fakeClient = k8sClient // Use EnvTest client
+		if err := fakeClient.Create(ctx, &disasterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
+			Spec:       disasterv1.ClusterSpec{KubeConfig: []byte("fake-kubeconfig")},
+		}); err != nil && !apierrors.IsAlreadyExists(err) {
+			Expect(err).NotTo(HaveOccurred())
+		}
 
 		// In-memory store for Velero resources
 		veleroStore = make(map[string]client.Object)

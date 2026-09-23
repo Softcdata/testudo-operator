@@ -140,6 +140,9 @@ func TestInstallVeleroInCluster_WithRegistryCredentialSyncsTargetSecretAndUsesOv
 	if len(executor.CalledWith) == 0 {
 		t.Fatalf("expected helm command to be executed")
 	}
+	if !strings.Contains(" "+strings.Join(executor.CalledWith[0], " ")+" ", " --skip-crds ") {
+		t.Fatalf("expected helm command to skip chart CRDs, got %q", executor.CalledWith[0])
+	}
 	if !strings.Contains(executor.RenderedValues, "harbor.customer.local/disaster/velero") {
 		t.Fatalf("expected velero repository override in values, got:\n%s", executor.RenderedValues)
 	}

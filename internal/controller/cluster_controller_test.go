@@ -2584,7 +2584,7 @@ type MockBSL struct {
 	Err         error
 }
 
-func (m *MockBSL) ApplyStorageRepository(ctx context.Context, _ client.Reader, cli client.Client, sr *disasterv1.StorageRepository, bslName, prefix string) error {
+func (m *MockBSL) ApplyStorageRepositoryForCluster(ctx context.Context, _ client.Reader, cli client.Client, _ *disasterv1.Cluster, sr *disasterv1.StorageRepository, bslName, prefix string) error {
 	m.Called = true
 	m.LastBSLName = bslName
 	m.LastPrefix = prefix

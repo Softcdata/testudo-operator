@@ -288,7 +288,7 @@ func (r *DisasterConfigReconciler) ApplyStorageRepository(ctx context.Context, c
 	}
 
 	defaultBSL := &DefaultBSL{}
-	return defaultBSL.ApplyStorageRepository(ctx, r.Client, cli, sr, bslName, prefix)
+	return defaultBSL.ApplyStorageRepositoryForCluster(ctx, r.Client, cli, cluster, sr, bslName, prefix)
 }
 
 func (r *DisasterConfigReconciler) syncDependencyLabels(ctx context.Context, dc *disasterv1.DisasterConfig) (bool, error) {

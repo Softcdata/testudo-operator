@@ -84,9 +84,13 @@ var _ = Describe("AppBackup State Machine", func() {
 				Endpoint: "http://minio",
 			},
 		}
+		cluster := &disasterv1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"},
+			Spec:       disasterv1.ClusterSpec{KubeConfig: []byte("fake-kubeconfig")},
+		}
 
 		// Setup Fake Clients
-		fakeClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(appBackup, storageRepo).Build()
+		fakeClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(appBackup, storageRepo, cluster).Build()
 		remoteClient = fake.NewClientBuilder().WithScheme(scheme).Build()
 		clientFactory = &MockClientFactory{MockClient: remoteClient}
 

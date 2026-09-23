@@ -8,6 +8,8 @@ metadata:
 spec:
   kubeConfig: "<BASE64_ENCODED_KUBECONFIG>"
   token: "<OPTIONAL_CLUSTER_TOKEN>"
+  veleroInstall:
+    bslEndpoint: "http://same-city-minio.example.com:9000"
 ---
 apiVersion: testudo.softcdata.com/v1
 kind: Cluster
@@ -19,3 +21,5 @@ metadata:
 spec:
   kubeConfig: "<BASE64_ENCODED_KUBECONFIG>"
   token: "<OPTIONAL_CLUSTER_TOKEN>"
+  veleroInstall:
+    bslEndpoint: "http://remote-city-minio.example.com:9000"

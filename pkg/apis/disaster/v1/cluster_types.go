@@ -45,6 +45,10 @@ type VeleroInstallSpec struct {
 	// RegistryCredentialSecretRef references the management-plane dockerconfigjson Secret.
 	// +optional
 	RegistryCredentialSecretRef *corev1.LocalObjectReference `json:"registryCredentialSecretRef,omitempty"`
+	// BSLEndpoint overrides the controller default S3 endpoint for BackupStorageLocations
+	// created in this physical cluster. It is independent of active/standby role.
+	// +optional
+	BSLEndpoint string `json:"bslEndpoint,omitempty"`
 }
 
 const (

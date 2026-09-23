@@ -92,6 +92,11 @@ spec:
                 description: VeleroInstall defines Velero install-specific image registry
                   settings.
                 properties:
+                  bslEndpoint:
+                    description: |-
+                      BSLEndpoint overrides the controller default S3 endpoint for BackupStorageLocations
+                      created in this physical cluster. It is independent of active/standby role.
+                    type: string
                   imageRegistry:
                     description: |-
                       ImageRegistry is the registry/repository prefix used for Velero install images.
